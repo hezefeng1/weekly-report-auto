@@ -36,7 +36,11 @@ def generate_weekly_report():
 def main():
     print("1. 生成周报 Markdown...")
     md = generate_weekly_report()
+    print("--- 原始 Markdown 内容（前500字符）---")
+    print(md[:500])  # 只打印前500字符，避免太长
+    print("------------------------------------")
     print("2. 渲染为图片...")
+    # ... 后续代码不变
     image_path = markdown_to_image(md, "weekly_report.png")
     print("3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
