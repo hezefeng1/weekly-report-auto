@@ -36,6 +36,8 @@ def generate_weekly_report():
 def main():
     print("1. 生成周报 Markdown...")
     md = generate_weekly_report()
+        # 强制修复 UTF-8 编码
+    md = md.encode('utf-8', errors='ignore').decode('utf-8')
     print("--- 原始 Markdown 内容（前500字符）---")
     print(md[:500])  # 只打印前500字符，避免太长
     print("------------------------------------")
