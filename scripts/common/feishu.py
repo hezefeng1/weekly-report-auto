@@ -24,6 +24,7 @@ def send_image_message(access_token, receive_id, image_key):
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     payload = {
         "receive_id": receive_id,
+        "receive_id_type": "open_id",
         "msg_type": "image",
         "content": json.dumps({"image_key": image_key})
     }
