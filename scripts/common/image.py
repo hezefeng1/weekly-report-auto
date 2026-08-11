@@ -2,6 +2,11 @@ from playwright.sync_api import sync_playwright
 import html
 
 def markdown_to_image(markdown_text, output_path="report.png"):
+    # 调试：打印原始文本的前200个字符到日志
+    print("=== image.py 接收到的原始内容（前200字符）===")
+    print(repr(markdown_text[:200]))
+    print("============================================")
+    # ... 后续代码
     """将 Markdown 渲染为 PNG 图片（强制 UTF-8 编码）"""
     
     # 对特殊字符进行 HTML 转义，防止被浏览器误解
