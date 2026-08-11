@@ -20,11 +20,10 @@ def upload_image(access_token, image_bytes):
 
 def send_image_message(access_token, receive_id, image_key):
     """发送图片私聊消息"""
-    url = "https://open.feishu.cn/open-apis/im/v1/messages"
+    url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     payload = {
         "receive_id": receive_id,
-        "receive_id_type": "open_id",
         "msg_type": "image",
         "content": json.dumps({"image_key": image_key})
     }
