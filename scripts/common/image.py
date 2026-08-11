@@ -1,13 +1,18 @@
 from playwright.sync_api import sync_playwright
+import markdown
 
 def markdown_to_image(markdown_text, output_path="report.png"):
     """将 Markdown 渲染为 PNG 图片"""
+    # 将 Markdown 转换为 HTML
+    md = markdown.Markdown(extensions=['tables', 'fenced_code'])
+    html_body = md.convert(markdown_text)
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
     <head><meta charset="UTF-8">
     <style>
-        body {{ font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        body {{ font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
                max-width: 1000px; margin: 30px auto; padding: 30px;
                background: #f5f7fa; color: #1a1a2e; line-height: 1.7; }}
         h1 {{ font-size: 30px; border-bottom: 3px solid #1a3a5c; padding-bottom: 12px; }}
@@ -21,7 +26,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     </style>
     </head>
     <body>
-        {markdown_text}
+        {html_body}
     </body>
     </html>
     """
@@ -29,7 +34,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1000, "height": 1400})
         page.set_content(html_content)
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(1500)
         page.screenshot(path=output_path, full_page=True)
         browser.close()
     return output_path
