@@ -97,7 +97,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 # 格式二检测：对比维度为行（表头包含"对比维度"）
                 if '对比维度' in header_text:
                     competitor_format = 'dimension_rows'
-                    # 提取企业列表（表头中的企业名）
+                    company_names_clean = []
                     for cell in cells:
                         for comp in company_names:
                             if comp in cell:
@@ -129,7 +129,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     # 如果格式二有数据，转置为格式一（企业为行）
     if dimension_rows and not competitor_data:
-        # 确定企业数量（从dimension_rows的第一行获取列数-1）
         num_companies = len(dimension_rows[0]) - 1 if dimension_rows else 0
         for i in range(num_companies):
             company_name = company_names[i] if i < len(company_names) else f"企业{i+1}"
@@ -258,7 +257,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                         card_values[card_key] = content
                     break
 
-    cards = [
+    cards_raw = [
         {"label": "关键人才争夺", "value": card_values['关键人才争夺']},
         {"label": "组织效能", "value": card_values['组织效能']},
         {"label": "人才结构", "value": card_values['人才结构']},
@@ -266,23 +265,51 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     ]
 
     # =========================================================
-    # ===== 8. 生成 HTML =====
+    # ===== 8. 卡片两行拆分 + 生成 HTML =====
     # =========================================================
+
+    cards = []
+    for card in cards_raw:
+        value = card['value']
+        label = card['label']
+        first_line = value
+        second_line = None
+        
+        # 如果有 | 分隔符，拆分成两行
+        if isinstance(value, str) and '|' in value:
+            parts = value.split('|', 1)
+            first_line = parts[0].strip()
+            second_line = parts[1].strip()
+            # 处理第一行的箭头符号
+            if first_line and first_line[0] in ['↑', '↓']:
+                first_line = f'<span class="up">{first_line[0]}</span>{first_line[1:]}'
+        else:
+            # 没有分隔符，全部放在第一行
+            first_line = value
+        
+        cards.append({
+            'label': label,
+            'first_line': first_line,
+            'second_line': second_line
+        })
 
     cards_html = ''
     for card in cards:
-        value = card['value']
-        if isinstance(value, str):
-            if value.startswith('↑'):
-                value = f'<span class="up">{value}</span>'
-            elif value.startswith('↓'):
-                value = f'<span class="down">{value}</span>'
-        cards_html += f'''
-        <div class="card">
-            <div class="card-value">{value}</div>
-            <div class="card-label">{card['label']}</div>
-        </div>
-        '''
+        if card['second_line']:
+            cards_html += f'''
+            <div class="card">
+                <div class="card-value">{card['first_line']}</div>
+                <div class="card-sub">{card['second_line']}</div>
+                <div class="card-label">{card['label']}</div>
+            </div>
+            '''
+        else:
+            cards_html += f'''
+            <div class="card">
+                <div class="card-value">{card['first_line']}</div>
+                <div class="card-label">{card['label']}</div>
+            </div>
+            '''
 
     table_html = ''
     if table_data:
@@ -405,7 +432,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             word-break: break-word;
         }}
         .card-value {{
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 700;
             color: #1a3a5c;
             line-height: 1.3;
@@ -414,7 +441,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         }}
         .card-value .up {{ color: #2e7d32; }}
         .card-value .down {{ color: #c62828; }}
-        .card-label {{ font-size: 13px; color: #888; margin-top: 4px; }}
+        .card-sub {{
+            font-size: 15px;
+            color: #555;
+            margin-top: 2px;
+            font-weight: 500;
+            max-width: 100%;
+            text-align: center;
+        }}
+        .card-label {{ font-size: 13px; color: #888; margin-top: 6px; }}
         .body-content {{ padding: 20px 40px 30px 40px; }}
         .section {{ margin-bottom: 24px; }}
         .section-title {{
