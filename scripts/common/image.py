@@ -6,19 +6,17 @@ from playwright.sync_api import sync_playwright
 def markdown_to_image(markdown_text, output_path="report.png"):
     """
     将人力资源周报 Markdown 内容渲染为 PNG 信息图
-    严格按照周报结构解析，无硬编码假数据
+    重构版：全篇扫描、动态识别、不依赖固定行号
     """
     print("=== 开始渲染图片 ===")
 
-    lines = markdown_text.split('\n')
+    raw_lines = markdown_text.split('\n')
     
-    # 预处理：去除行首的 > 和空白字符（处理引用块中的内容）
-    cleaned_lines = []
-    for line in lines:
-        # 去除行首的 > 和空格
+    # ===== 预处理：去除行首 > 符号（引用块） =====
+    lines = []
+    for line in raw_lines:
         cleaned = re.sub(r'^>\s*', '', line)
-        cleaned_lines.append(cleaned)
-    lines = cleaned_lines
+        lines.append(cleaned)
     
     # ===== 1. 提取标题和日期 =====
     title = "农牧行业人力资源周报"
@@ -36,11 +34,94 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         import datetime
         report_date = datetime.datetime.now().strftime("%Y年%m月%d日")
 
-    # ===== 2. 提取关键结论 =====
+    # ===== 2. 提取所有表格及其上下文 =====
+    # 扫描所有包含 '|' 的行，识别表格
+    all_tables = []  # 每个元素: {'title': 表格标题行, 'headers': 表头列表, 'rows': 数据行列表, 'type': 自动识别}
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        # 检测表格开始：当前行包含 '|' 且上一行或当前行是表头
+        if '|' in line and '---' not in line:
+            # 尝试获取表格标题（前几行可能包含 '核心数据速览' 等）
+            title_line = ""
+            for j in range(max(0, i-5), i):
+                if '核心数据速览' in lines[j] or '行业薪酬趋势' in lines[j] or '薪酬趋势' in lines[j]:
+                    title_line = lines[j].strip()
+                    break
+            
+            # 提取表头（当前行可能已经是表头，也可能是数据行）
+            cells = [c.strip() for c in line.split('|') if c.strip()]
+            if len(cells) < 3:
+                i += 1
+                continue
+            
+            # 判断是否是表头：包含 '指标'、'数据'、'岗位'、'类别' 等关键词
+            header_text = ''.join(cells)
+            is_header = ('指标' in header_text or '关键指标' in header_text or 
+                        '岗位类别' in header_text or '平均月薪' in header_text or
+                        '本期数据' in header_text or '趋势' in header_text)
+            
+            if is_header:
+                headers = cells
+                i += 1
+                # 收集数据行
+                rows = []
+                while i < len(lines):
+                    data_line = lines[i].strip()
+                    if '|' not in data_line or '---' in data_line:
+                        break
+                    data_cells = [c.strip() for c in data_line.split('|') if c.strip()]
+                    if len(data_cells) >= 3:
+                        rows.append(data_cells[:3])
+                    i += 1
+                # 保存表格
+                if rows:
+                    # 自动识别类型
+                    table_type = 'unknown'
+                    if '核心数据速览' in title_line:
+                        table_type = 'core'
+                    elif '薪酬趋势' in title_line or '行业薪酬' in title_line:
+                        table_type = 'salary'
+                    else:
+                        # 根据表头自动判断
+                        header_joined = ''.join(headers)
+                        if '关键指标' in header_joined or '指标' in header_joined and '趋势' in header_joined:
+                            table_type = 'core'
+                        elif '岗位类别' in header_joined or '平均月薪' in header_joined:
+                            table_type = 'salary'
+                    all_tables.append({
+                        'title': title_line,
+                        'headers': headers,
+                        'rows': rows,
+                        'type': table_type
+                    })
+            else:
+                # 当前行不是表头，可能是无表头表格或误判，跳过
+                i += 1
+        else:
+            i += 1
+
+    # ===== 3. 优先使用 core 表格，否则用 salary 表格 =====
+    core_table = None
+    salary_table = None
+    for tbl in all_tables:
+        if tbl['type'] == 'core':
+            core_table = tbl
+        elif tbl['type'] == 'salary':
+            salary_table = tbl
+
+    # 如果 core_table 存在，用它；否则用 salary_table
+    primary_table = core_table if core_table else salary_table
+    table_data = primary_table['rows'] if primary_table else []
+    table_type = primary_table['type'] if primary_table else 'unknown'
+
+    # ===== 4. 提取关键结论（支持多种标题） =====
     conclusions = []
     in_summary = False
+    summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号']
     for line in lines:
-        if '本期摘要' in line or '本期核心摘要' in line or '本周关键结论' in line or '关键结论' in line or '本期关键结论' in line:
+        if any(kw in line for kw in summary_keywords):
             in_summary = True
             continue
         if in_summary:
@@ -59,43 +140,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 3. 提取核心数据速览表 =====
-    table_data = []
-    in_metric_table = False
-    table_type = None
-
-    for line in lines:
-        if '核心数据速览' in line:
-            in_metric_table = True
-            table_type = 'core'
-            continue
-        if '行业薪酬趋势' in line:
-            if not in_metric_table:
-                in_metric_table = True
-                table_type = 'salary'
-            continue
-        
-        if in_metric_table and '|' in line and '---' not in line:
-            cells = [c.strip() for c in line.split('|') if c.strip()]
-            if len(cells) >= 3:
-                header_text = ''.join(cells)
-                if '关键指标' in header_text and '本期数据' in header_text:
-                    continue
-                if '岗位类别' in header_text and '平均月薪' in header_text:
-                    continue
-                if '岗位类别' in header_text and '2026年' in header_text:
-                    continue
-                has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
-                if has_data and len(cells) >= 3:
-                    while len(cells) < 3:
-                        cells.append('')
-                    table_data.append(cells[:3])
-        
-        if in_metric_table and line.startswith('##') and '核心数据' not in line and '行业薪酬' not in line:
-            in_metric_table = False
-            table_type = None
-
-    # ===== 4. 从表格数据提取数据卡片 =====
+    # ===== 5. 从表格中提取数据卡片（关键词匹配，不依赖行号） =====
     card_values = {
         '招聘热度': '--',
         '薪酬变化': '--',
@@ -103,35 +148,34 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         '政策动向': '暂无'
     }
 
-    if table_type == 'core' and len(table_data) >= 4:
+    if table_data:
         for row in table_data:
             if len(row) >= 2:
-                indicator = row[0]
-                val = row[1] if row[1] else ''
-                if '招聘热度' in indicator or '整体招聘' in indicator:
-                    num = re.search(r'([\d.]+%?)', val)
-                    card_values['招聘热度'] = f"↑ {num.group(1)}" if num and '上升' in val else f"↓ {num.group(1)}" if num and '下降' in val else val
-                elif '薪酬' in indicator or '月薪' in indicator or '兽医' in indicator:
-                    num = re.search(r'([\d,]+-?[\d,]*\s*%?)', val)
-                    card_values['薪酬变化'] = num.group(1) if num else val
-                elif '离职率' in indicator or '流动率' in indicator:
-                    num = re.search(r'([\d.]+%?)', val)
-                    card_values['人才流动'] = num.group(1) if num else val
-    elif table_type == 'salary' and len(table_data) >= 4:
-        for i, row in enumerate(table_data[:4]):
-            if len(row) >= 2:
                 label = row[0]
-                val = row[1]
-                if i == 0:
-                    card_values['招聘热度'] = val
-                elif i == 1:
-                    card_values['薪酬变化'] = val
-                elif i == 2:
-                    card_values['人才流动'] = val
-                elif i == 3:
-                    card_values['政策动向'] = val
+                value = row[1]
+                # 匹配招聘热度
+                if any(kw in label for kw in ['招聘热度', '整体招聘', '行业招聘']):
+                    card_values['招聘热度'] = value
+                # 匹配薪酬
+                if any(kw in label for kw in ['薪酬', '月薪', '兽医', '育种', '场长']):
+                    card_values['薪酬变化'] = value
+                # 匹配离职率/流动率
+                if any(kw in label for kw in ['离职率', '流动率']):
+                    card_values['人才流动'] = value
 
-    # 提取政策动向
+    # 如果某些卡片还是空，从备用行补充（从表格中找第二个薪酬行或最后一个指标）
+    if card_values['招聘热度'] == '--' and len(table_data) > 0:
+        card_values['招聘热度'] = table_data[0][1] if len(table_data[0]) >= 2 else '--'
+    if card_values['薪酬变化'] == '--' and len(table_data) > 1:
+        card_values['薪酬变化'] = table_data[1][1] if len(table_data[1]) >= 2 else '--'
+    if card_values['人才流动'] == '--' and len(table_data) > 2:
+        # 尝试找包含 '%' 的行
+        for row in table_data:
+            if len(row) >= 2 and '%' in row[1]:
+                card_values['人才流动'] = row[1]
+                break
+
+    # 政策动向：从政策板块提取
     in_policy_section = False
     policy_title = ""
     for line in lines:
@@ -151,7 +195,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if clean and len(clean) > 5 and len(clean) < 80:
                 policy_title = clean[:20] + "..." if len(clean) > 20 else clean
                 break
-    
     if policy_title:
         card_values['政策动向'] = policy_title
 
@@ -162,7 +205,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         {"label": "政策动向", "value": card_values['政策动向']},
     ]
 
-    # ===== 5. 提取要闻 =====
+    # ===== 6. 提取要闻（不变） =====
     news_items = []
     in_news_section = False
     for line in lines:
@@ -198,7 +241,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_news_section and len(news_items) >= 5:
             break
 
-    # ===== 6. 提取竞品对比表 =====
+    # ===== 7. 提取竞品对比表（不变，但增强表头跳过） =====
     competitor_data = []
     in_competitor_table = False
 
@@ -211,24 +254,21 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 5:
                 header_text = ''.join(cells)
-                if '企业' in header_text and '招聘策略' in header_text:
-                    continue
-                if '招聘策略' in header_text and '人才培养' in header_text:
+                if any(kw in header_text for kw in ['企业', '对比维度', '招聘策略', '人才培养']):
                     continue
                 
-                if len(cells) >= 5:
-                    first_cell = cells[0]
-                    first_cell_clean = first_cell.replace('**', '').strip()
-                    if any(kw in first_cell_clean for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
-                        while len(cells) < 6:
-                            cells.append('—')
-                        cells = [c.replace('**', '') for c in cells]
-                        competitor_data.append(cells[:6])
+                first_cell = cells[0]
+                first_cell_clean = first_cell.replace('**', '').strip()
+                if any(kw in first_cell_clean for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
+                    while len(cells) < 6:
+                        cells.append('—')
+                    cells = [c.replace('**', '') for c in cells]
+                    competitor_data.append(cells[:6])
         
         if in_competitor_table and line.startswith('##') and '竞品' not in line:
             in_competitor_table = False
 
-    # ===== 7. 提取行动建议 =====
+    # ===== 8. 提取行动建议（不变） =====
     action_items = []
     in_action_table = False
     action_skip = ['HR行动建议', '维度', '具体建议', '数据/案例支撑']
@@ -251,11 +291,10 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_action_table and line.startswith('##') and '行动' not in line:
             break
 
-    # ===== 生成 HTML 模板 =====
+    # ===== 生成 HTML =====
     cards_html = ''
     for card in cards:
         value = card['value']
-        # 检测是否为趋势数据，添加颜色
         if isinstance(value, str) and value.startswith('↑'):
             value = f'<span class="up">{value}</span>'
         elif isinstance(value, str) and value.startswith('↓'):
@@ -398,12 +437,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             line-height: 1.2;
             max-width: 100%;
         }}
-        .card-value .up {{
-            color: #2e7d32;
-        }}
-        .card-value .down {{
-            color: #c62828;
-        }}
+        .card-value .up {{ color: #2e7d32; }}
+        .card-value .down {{ color: #c62828; }}
         .card-label {{
             font-size: 13px;
             color: #888;
@@ -442,12 +477,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             padding: 8px 14px;
             border-bottom: 1px solid #e8ecf1;
         }}
-        tr:nth-child(even) {{
-            background: #f8f9fc;
-        }}
-        tr:last-child td {{
-            border-bottom: none;
-        }}
+        tr:nth-child(even) {{ background: #f8f9fc; }}
+        tr:last-child td {{ border-bottom: none; }}
         .conclusion-list, .news-list {{
             list-style: none;
             padding: 0;
@@ -474,9 +505,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             font-size: 10px;
             top: 11px;
         }}
-        .news-list li:last-child {{
-            border-bottom: none;
-        }}
+        .news-list li:last-child {{ border-bottom: none; }}
         .action-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -507,12 +536,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             text-align: center;
             border-top: 1px solid #e8ecf1;
         }}
-        .up {{
-            color: #2e7d32;
-        }}
-        .down {{
-            color: #c62828;
-        }}
+        .up {{ color: #2e7d32; }}
+        .down {{ color: #c62828; }}
     </style>
 </head>
 <body>
@@ -532,22 +557,18 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             <div class="section-title">📊 数据速览</div>
             {table_html}
         </div>
-
         <div class="section">
             <div class="section-title">🎯 关键结论</div>
             <ul class="conclusion-list">{conclusions_html}</ul>
         </div>
-
         <div class="section">
             <div class="section-title">📰 要闻精选</div>
             <ul class="news-list">{news_html}</ul>
         </div>
-
         <div class="section">
             <div class="section-title">📋 竞品HR策略对比</div>
             {competitor_html}
         </div>
-
         <div class="section">
             <div class="section-title">📌 HR 行动建议</div>
             <div class="action-grid">{action_html}</div>
