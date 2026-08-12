@@ -206,6 +206,9 @@ def generate_weekly_report():
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
     print(f"  ✅ 生成完成，共 {len(content)} 字符")
+    print("=== DeepSeek 返回的完整 Markdown 内容 ===")
+    print(content)
+    print("=== 内容结束 ===")
     return content
 
 def main():
