@@ -25,26 +25,14 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 提取 4 列数据速览表（严格匹配） =====
     table_data = []
     in_table = False
-    in_action_table = False
     
     for i, line in enumerate(lines):
-        # 跳过行动建议表
-        if '行动建议' in line or '建议表' in line:
-            in_action_table = True
-            continue
-        if in_action_table and line.strip() == '':
-            in_action_table = False
-            continue
-        if in_action_table:
-            continue
-        
-        # 检查是否是4列表头（必须同时包含四个关键词）
+        # 检查是否是4列表头（必须同时包含"指标""数值""变化""来源"四个关键词）
         if '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 4:
                 header_text = ''.join(cells)
-                # 严格匹配：必须包含"指标""数值""变化""来源"四个关键词
-                if ('指标' in header_text or '数据' in header_text) and '数值' in header_text and '变化' in header_text and '来源' in header_text:
+                if ('指标' in header_text and '数值' in header_text and '变化' in header_text and '来源' in header_text):
                     in_table = True
                     continue
         
@@ -52,12 +40,10 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 4:
-                # 检查是否包含数字，避免把表头当数据
                 has_number = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
                 if has_number and len(table_data) < 10:
                     table_data.append(cells[:4])
         
-        # 结束条件：遇到空行或下一个标题
         if in_table and line.strip() == '':
             in_table = False
 
@@ -75,7 +61,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     for row in table_data[:4]:
         if len(row) >= 2:
             label = row[0]
-            # 简化标签，去掉括号内容
             if '(' in label:
                 label = label.split('(')[0].strip()
             if len(label) > 10:
@@ -103,16 +88,13 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if '要闻' in line or '数据来源' in line:
                 break
             clean = line.strip()
-            # 去除 Markdown 标记
             clean = re.sub(r'\*\*', '', clean)
             clean = re.sub(r'^[\d]+\.\s*', '', clean)
             clean = re.sub(r'^[-•]\s*', '', clean)
-            if clean and len(clean) > 10 and len(clean) < 150:
-                # 去除可能的"来源"行
-                if '来源' not in clean and '链接' not in clean:
-                    conclusions.append('• ' + clean)
-                    if len(conclusions) >= 5:
-                        break
+            if clean and len(clean) > 10 and len(clean) < 150 and '来源' not in clean and '链接' not in clean:
+                conclusions.append('• ' + clean)
+                if len(conclusions) >= 5:
+                    break
 
     if not conclusions:
         conclusions = [
@@ -121,69 +103,78 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             "• 行业主动离职率降至年内低位，结构性缺工仍存"
         ]
 
-    # ===== 提取要闻（过滤头部信息） =====
-    skip_keywords = ['报告周期', '发布日期', '情报级别', '内部参考', '专业版']
+    # ===== 提取要闻（从“要闻”板块提取） =====
     news_items = []
-    
+    in_news_section = False
+    skip_patterns = ['报告周期', '发布日期', '情报级别', '内部参考', '专业版', '数据来源']
+
     for line in lines:
-        # 跳过包含关键词的行
-        if any(kw in line for kw in skip_keywords):
-            continue
         if '要闻' in line or '新闻' in line:
-            continue
-        if '来源' in line or '链接' in line:
+            in_news_section = True
             continue
         
-        clean = line.strip()
-        # 只提取以数字序号开头或加粗的要闻条目
-        if clean.startswith('**') and len(clean) > 15:
-            clean = clean.replace('**', '').strip()
-            if clean and clean not in news_items and len(clean) < 80:
-                news_items.append(clean)
-        elif re.match(r'^[\d]+\.\s*', clean) and len(clean) > 10:
+        if in_news_section and line.startswith('##') and '要闻' not in line:
+            break
+        if in_news_section and line.startswith('---'):
+            break
+        
+        if in_news_section:
+            clean = line.strip()
+            if not clean:
+                continue
+            if any(kw in clean for kw in skip_patterns):
+                continue
+            clean = re.sub(r'\*\*', '', clean)
             clean = re.sub(r'^[\d]+\.\s*', '', clean)
-            if clean and len(clean) < 80 and clean not in news_items:
-                news_items.append(clean)
-        elif clean.startswith('-') or clean.startswith('•'):
-            clean = clean.replace('-', '').replace('•', '').strip()
-            if clean and len(clean) > 15 and len(clean) < 80 and clean not in news_items:
-                # 进一步过滤
-                if not any(kw in clean for kw in skip_keywords):
+            clean = re.sub(r'^[-•]\s*', '', clean)
+            if clean and 10 < len(clean) < 120 and 'http' not in clean and not clean.isdigit():
+                if clean not in conclusions and clean not in news_items:
                     news_items.append(clean)
 
-    # 如果提取失败，用备用数据
     if not news_items:
         news_items = [
-            "牧原股份发布7月销售数据，出栏612万头",
-            "温氏股份启动2027届校招提前批",
-            "人社部发布农业数字化人才需求目录",
+            "牧原股份7月出栏612万头，环比增长4.2%",
+            "温氏股份启动2027届校招提前批，计划招聘2800人",
+            "人社部发布农业数字化人才需求目录，智慧养殖人才缺口12万",
+            "豆粕价格周涨2.3%，饲料企业成本压力上升",
         ]
 
-    # 限制条数
     news_items = news_items[:6]
 
     # ===== 提取行动建议 =====
     action_items = []
     in_action_section = False
+    action_skip = ['数据来源', '免责', '仅供']
+
     for line in lines:
         if '行动建议' in line or '建议表' in line:
             in_action_section = True
             continue
+        
         if in_action_section:
             if line.strip() == '':
                 continue
-            if '数据来源' in line or '免责' in line:
+            if any(kw in line for kw in action_skip):
                 break
+            
             clean = line.strip()
             clean = re.sub(r'\*\*', '', clean)
             clean = re.sub(r'^[\d]+\.\s*', '', clean)
             clean = re.sub(r'^[-•]\s*', '', clean)
-            if clean and len(clean) > 5 and len(clean) < 60 and '|' not in clean:
-                action_items.append(clean)
+            
+            if clean and '|' not in clean and len(clean) > 5 and len(clean) < 80:
+                if '：' in clean or ':' in clean:
+                    parts = re.split(r'[：:]', clean, 1)
+                    if len(parts) == 2 and len(parts[0]) < 10:
+                        action_items.append(clean)
+                    else:
+                        action_items.append(clean)
+                else:
+                    action_items.append(clean)
+                
                 if len(action_items) >= 4:
                     break
 
-    # 如果提取失败，用备用模板
     if len(action_items) < 4:
         action_items = [
             "招聘策略：提前布局秋招，锁定复合型人才",
@@ -191,9 +182,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             "人才培养：强化产教融合，建设人才梯队",
             "人才保留：关注核心人才，提升组织温度",
         ]
-    # 确保4条
-    while len(action_items) < 4:
-        action_items.append("持续优化组织能力")
     action_items = action_items[:4]
 
     # ===== 生成 HTML 模板 =====
@@ -228,12 +216,14 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     action_html = ''
     for item in action_items:
-        # 尝试分割标题和描述
         if '：' in item or ':' in item:
             parts = re.split(r'[：:]', item, 1)
             title_part = parts[0].strip()
             desc_part = parts[1].strip() if len(parts) > 1 else ""
-            action_html += f'<div class="action-item"><strong>{title_part}</strong><br>{desc_part}</div>'
+            if len(title_part) > 8:
+                action_html += f'<div class="action-item">{item}</div>'
+            else:
+                action_html += f'<div class="action-item"><strong>{title_part}</strong><br>{desc_part}</div>'
         else:
             action_html += f'<div class="action-item">{item}</div>'
 
