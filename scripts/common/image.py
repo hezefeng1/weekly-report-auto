@@ -28,7 +28,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     conclusions = []
     in_summary = False
     for line in lines:
-        if '本期摘要' in line or '**本期摘要**' in line:
+        if '本期摘要' in line or '**本期摘要**' in line or '本期核心摘要' in line:
             in_summary = True
             continue
         if in_summary:
@@ -39,18 +39,20 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             clean = line.strip()
             if clean.startswith('-'):
                 clean = clean[1:].strip()
+            if clean.startswith('>'):
+                clean = clean[1:].strip()
             clean = re.sub(r'\*\*', '', clean)
-            if clean and len(clean) > 10 and len(clean) < 200:
+            if clean and len(clean) > 10 and len(clean) < 250:
                 conclusions.append('• ' + clean)
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 3. 提取核心指标追踪表 =====
+    # ===== 3. 提取核心数据速览表（与周报原文匹配） =====
     table_data = []
     in_metric_table = False
 
     for line in lines:
-        if '核心指标追踪' in line or '### 3.1 核心指标追踪' in line:
+        if '核心数据速览' in line:
             in_metric_table = True
             continue
         
@@ -58,15 +60,17 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
-                if '指标' in header_text and '本期' in header_text:
+                # 匹配表头："关键指标" + "本期数据"
+                if '关键指标' in header_text and '本期数据' in header_text:
                     continue
-                has_number = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
-                if has_number and len(cells) >= 3:
-                    while len(cells) < 4:
+                # 检查是否是数据行（包含数字或%）
+                has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
+                if has_data and len(cells) >= 3:
+                    while len(cells) < 3:
                         cells.append('')
-                    table_data.append(cells[:4])
+                    table_data.append(cells[:3])
         
-        if in_metric_table and line.startswith('###') and '核心指标' not in line:
+        if in_metric_table and line.startswith('##') and '核心数据' not in line:
             in_metric_table = False
 
     # ===== 4. 从指标表提取数据卡片 =====
@@ -81,21 +85,24 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if len(row) >= 2:
             indicator = row[0]
             value = row[1] if row[1] else ''
-            if any(kw in indicator for kw in ['新增岗位', '招聘', '岗位数']):
+            # 匹配招聘热度
+            if any(kw in indicator for kw in ['招聘热度', '生猪养殖岗', '招聘']):
                 if value:
                     card_values['招聘热度'] = value
-            if any(kw in indicator for kw in ['月薪', '薪酬', '平均月薪']):
+            # 匹配薪酬变化
+            if any(kw in indicator for kw in ['薪酬', '兽医', '月薪']):
                 if value:
                     card_values['薪酬变化'] = value
-            if any(kw in indicator for kw in ['离职率', '流动率']):
+            # 匹配人才流动
+            if any(kw in indicator for kw in ['流动率', '离职', '技术岗']):
                 if value:
                     card_values['人才流动'] = value
     
-    # 提取政策动向
+    # 提取政策动向：查找 "政策" 板块
     in_policy_section = False
     policy_title = ""
     for line in lines:
-        if '政策环境支持' in line or '### 3.3' in line:
+        if '政策环境支持' in line or '政策' in line and '补贴' in line:
             in_policy_section = True
             continue
         if in_policy_section:
@@ -135,7 +142,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if '[' in line and '](' in line and '|' in line:
                 title_match = re.search(r'\[([^\]]+)\]\([^\)]+\)', line)
                 title_text = title_match.group(1) if title_match else ""
-                source_match = re.search(r'〖来源：([^〗]+)〗', line)
+                source_match = re.search(r'【来源：([^】]+)】', line)
                 source_text = source_match.group(1) if source_match else ""
                 if title_text and len(title_text) > 5:
                     display_text = title_text
@@ -173,20 +180,32 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     competitor_data = []
     in_competitor_table = False
     for line in lines:
-        if '竞品HR策略对比' in line or '### 2.1' in line:
+        if '竞品HR动态' in line or '## 二、' in line:
             in_competitor_table = True
             continue
         if in_competitor_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
-            if len(cells) >= 4:
-                if '企业' in ''.join(cells) or '公司' in ''.join(cells):
+            if len(cells) >= 5:
+                # 跳过表头
+                if '企业' in ''.join(cells) or '招聘策略' in ''.join(cells):
                     continue
-                if len(cells) >= 4:
-                    while len(cells) < 5:
+                # 检查是否包含竞品企业名称
+                if len(cells) >= 5 and any(kw in cells[0] for kw in ['牧原', '温氏', '海大', '双胞胎', '正大', '集团']):
+                    while len(cells) < 6:
                         cells.append('')
-                    competitor_data.append(cells[:5])
-        if in_competitor_table and line.startswith('###') and '竞品' not in line:
+                    competitor_data.append(cells[:6])
+        if in_competitor_table and line.startswith('##') and '竞品' not in line:
             in_competitor_table = False
+
+    # 如果没匹配到表格，尝试从 Markdown 列表中提取
+    if not competitor_data:
+        for line in lines:
+            if '**牧原股份**' in line or '**温氏股份**' in line or '**海大集团**' in line:
+                clean = line.strip()
+                clean = re.sub(r'\*\*', '', clean)
+                if clean and len(clean) > 5:
+                    # 简单提取名称和第一项内容
+                    competitor_data.append([clean, '详见原文', '详见原文', '详见原文', '详见原文'])
 
     # ===== 7. 提取行动建议 =====
     action_items = []
@@ -219,7 +238,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # 数据速览表
     table_html = ''
     if table_data:
-        table_html = '<table><thead><tr><th>指标</th><th>本期</th><th>环比</th><th>数据来源</th></tr></thead><tbody>'
+        table_html = '<table><thead><tr><th>指标</th><th>本期数据</th><th>趋势</th></tr></thead><tbody>'
         for row in table_data[:10]:
             table_html += '<tr>'
             for cell in row:
@@ -248,7 +267,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # 竞品对比表
     competitor_html = ''
     if competitor_data:
-        competitor_html = '<table><thead><tr><th>企业</th><th>招聘策略</th><th>人才培养</th><th>薪酬激励</th><th>最新动态</th></tr></thead><tbody>'
+        competitor_html = '<table><thead><tr><th>企业</th><th>招聘策略</th><th>人才培养</th><th>薪酬激励</th><th>组织/人效</th><th>最新动态</th></tr></thead><tbody>'
         for row in competitor_data[:5]:
             competitor_html += '<tr>'
             for cell in row:
