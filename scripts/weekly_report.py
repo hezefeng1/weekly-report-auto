@@ -272,7 +272,16 @@ def main():
     image_key = upload_image(token, image_bytes)
     
     print("\n5. 发送私聊消息...")
-    send_image_message(token, RECEIVE_OPEN_ID, image_key)
+    # 支持多个接收人，用 | 分隔
+    receive_ids = RECEIVE_OPEN_ID.split('|')
+    for idx, open_id in enumerate(receive_ids):
+        open_id = open_id.strip()
+        if open_id:
+            try:
+                send_image_message(token, open_id, image_key)
+                print(f"   ✅ 已发送给 {open_id}")
+            except Exception as e:
+                print(f"   ❌ 发送给 {open_id} 失败: {e}")
     
     print("\n✅ 人力资源周报发送完成！")
 
