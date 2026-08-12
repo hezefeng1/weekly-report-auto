@@ -96,47 +96,40 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             table_type = None
             used_table_title = None
 
-    # ===== 4. 从表格数据提取数据卡片 =====
+    # ===== 4. 从表格数据提取数据卡片（按行号精准映射） =====
     card_values = {
         '招聘热度': '--',
         '薪酬变化': '--',
         '人才流动': '--',
         '政策动向': '暂无'
     }
-    
-    # 根据表格类型提取卡片
-    if table_type == 'core':
-        # 核心数据速览：按关键词匹配
+
+    # 优先使用核心数据速览表格（按行号精准映射）
+    if table_type == 'core' and len(table_data) >= 6:
+        # 行1: 行业整体招聘热度 → 招聘热度
+        if len(table_data[0]) >= 2 and table_data[0][1]:
+            card_values['招聘热度'] = table_data[0][1]
+        # 行4: 兽医/育种专家岗薪酬 → 薪酬变化
+        if len(table_data[3]) >= 2 and table_data[3][1]:
+            card_values['薪酬变化'] = table_data[3][1]
+        # 行6: 行业主动离职率 → 人才流动
+        if len(table_data[5]) >= 2 and table_data[5][1]:
+            card_values['人才流动'] = table_data[5][1]
+    else:
+        # 备用：用关键词匹配
         for row in table_data:
             if len(row) >= 2:
                 indicator = row[0]
                 value = row[1] if row[1] else ''
-                if any(kw in indicator for kw in ['招聘热度', '生猪养殖岗', '招聘']):
+                if any(kw in indicator for kw in ['招聘热度', '整体招聘']):
                     if value:
                         card_values['招聘热度'] = value
-                if any(kw in indicator for kw in ['薪酬', '兽医', '月薪']):
+                if any(kw in indicator for kw in ['兽医', '育种专家']):
                     if value:
                         card_values['薪酬变化'] = value
-                if any(kw in indicator for kw in ['流动率', '离职', '技术岗']):
+                if any(kw in indicator for kw in ['离职率']):
                     if value:
                         card_values['人才流动'] = value
-    else:
-        # 行业薪酬趋势：取前4个岗位的薪酬作为卡片
-        # 标签取岗位名，数值取月薪
-        for row in table_data[:4]:
-            if len(row) >= 2:
-                label = row[0]
-                value = row[1] if row[1] else ''
-                # 简化标签
-                if '场长' in label:
-                    card_values['招聘热度'] = value  # 场长薪酬作为招聘热度
-                elif '兽医' in label or '动保' in label:
-                    card_values['薪酬变化'] = value  # 兽医薪酬作为薪酬变化
-                elif '智能化' in label or '工程师' in label:
-                    card_values['人才流动'] = value  # 智能化岗位薪酬作为人才流动
-                elif '一线' in label or '技工' in label:
-                    if card_values['政策动向'] == '暂无':
-                        card_values['政策动向'] = value
 
     # 提取政策动向（从3.3政策环境支持）
     in_policy_section = False
@@ -153,7 +146,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             clean = line.strip()
             if clean.startswith('-') or clean.startswith('•'):
                 clean = clean[1:].strip()
-            # 去除链接和加粗
             clean = re.sub(r'\[.*?\]\(.*?\)', '', clean)
             clean = re.sub(r'\*\*', '', clean)
             if clean and len(clean) > 5 and len(clean) < 80:
@@ -190,7 +182,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if title_text and len(title_text) > 5:
                     display_text = title_text
                     if source_text:
-                        # 提取来源简称
                         if '巨潮资讯' in source_text:
                             source_text = '巨潮'
                         elif '证券时报' in source_text:
@@ -271,7 +262,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     table_html = ''
     if table_data:
-        # 根据表格类型决定表头
         if table_type == 'core':
             headers = ['指标', '本期数据', '趋势']
         else:
