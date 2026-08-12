@@ -24,7 +24,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         elif '报告周期' in line or '发布日期' in line:
             report_date = line.strip()
 
-    # ===== 2. 提取关键结论（匹配多种标题） =====
+    # ===== 2. 提取关键结论 =====
     conclusions = []
     in_summary = False
     for line in lines:
@@ -150,23 +150,56 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_news_section and len(news_items) >= 5:
             break
 
+    if not news_items:
+        in_news_section = False
+        for line in lines:
+            if '人力资源要闻' in line:
+                in_news_section = True
+                continue
+            if in_news_section:
+                if line.startswith('##') and '要闻' not in line:
+                    break
+                clean = line.strip()
+                if clean.startswith('-') or clean.startswith('•'):
+                    clean = clean[1:].strip()
+                    if clean and len(clean) > 10 and len(clean) < 100:
+                        clean = re.sub(r'【来源.*?】', '', clean)
+                        clean = re.sub(r'〖来源.*?〗', '', clean)
+                        clean = clean.strip()
+                        news_items.append(clean)
+                    if len(news_items) >= 5:
+                        break
+
     # ===== 6. 提取竞品对比表 =====
     competitor_data = []
     in_competitor_table = False
+
     for line in lines:
         if '竞品HR动态' in line or '## 二、行业竞品HR动态' in line:
             in_competitor_table = True
             continue
+        
         if in_competitor_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 5:
+                # 跳过表头
                 header_text = ''.join(cells)
                 if '企业' in header_text and '招聘策略' in header_text:
                     continue
-                if len(cells) >= 5 and any(kw in cells[0] for kw in ['牧原', '温氏', '海大', '双胞胎', '正大', '集团']):
-                    while len(cells) < 6:
-                        cells.append('')
-                    competitor_data.append(cells[:6])
+                if '招聘策略' in header_text and '人才培养' in header_text:
+                    continue
+                
+                # 检查是否是竞品数据行（支持带**加粗的格式）
+                if len(cells) >= 5:
+                    first_cell = cells[0]
+                    first_cell_clean = first_cell.replace('**', '').strip()
+                    if any(kw in first_cell_clean for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
+                        while len(cells) < 6:
+                            cells.append('')
+                        # 清理加粗标记
+                        cells = [c.replace('**', '') for c in cells]
+                        competitor_data.append(cells[:6])
+        
         if in_competitor_table and line.startswith('##') and '竞品' not in line:
             in_competitor_table = False
 
