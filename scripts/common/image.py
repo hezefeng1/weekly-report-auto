@@ -67,12 +67,9 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     cells = [re.sub(r'\*\*', '', c) for c in cells]
                     table_data.append(cells[:3])
 
-    # ===== 3. 提取竞品对比表（支持两种格式） =====
+    # ===== 3. 提取竞品对比表 =====
     competitor_data = []
     in_competitor = False
-    company_names = ['牧原股份', '温氏股份', '海大集团', '双胞胎集团', '正大集团']
-    dimension_rows = []
-    competitor_format = None
 
     for line in lines:
         if '竞品HR动态' in line or '竞品对比' in line or '行业竞品HR动态' in line:
@@ -86,61 +83,17 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 cells = [c.strip() for c in line.split('|') if c.strip()]
                 if len(cells) < 4:
                     continue
-                    
                 header_text = ''.join(cells)
-                
-                # 格式一检测：企业为行（表头包含"企业"或"竞品企业" + "招聘策略"）
-                if ('企业' in header_text or '竞品企业' in header_text) and '招聘策略' in header_text:
-                    competitor_format = 'company_rows'
+                # 检测表头：企业 + 招聘策略
+                if ('企业' in header_text and '招聘策略' in header_text):
                     continue
-                
-                # 格式二检测：对比维度为行（表头包含"对比维度"）
-                if '对比维度' in header_text:
-                    competitor_format = 'dimension_rows'
-                    company_names_clean = []
-                    for cell in cells:
-                        for comp in company_names:
-                            if comp in cell:
-                                clean = cell.replace('**', '').strip()
-                                if clean not in company_names_clean:
-                                    company_names_clean.append(clean)
-                    continue
-                
+                # 检测数据行：企业名在第一列
                 first_cell = cells[0].replace('**', '').strip()
-                
-                # 检查是否是企业名列（格式二的列头，包含企业名）
-                if any(comp in first_cell for comp in company_names):
-                    continue
-                
-                # 格式一：企业为行
-                if competitor_format == 'company_rows' or competitor_format is None:
-                    if any(comp in first_cell for comp in company_names):
-                        while len(cells) < 6:
-                            cells.append('—')
-                        cells = [c.replace('**', '') for c in cells]
-                        competitor_data.append(cells[:6])
-                
-                # 格式二：对比维度为行，收集维度行
-                if competitor_format == 'dimension_rows' or (competitor_format is None and any(kw in first_cell for kw in ['招聘策略', '人才培养', '人效', '薪酬', '激励', '组织', '架构', '布局', '提升', '渗透率'])):
+                if any(kw in first_cell for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
                     while len(cells) < 6:
                         cells.append('—')
                     cells = [c.replace('**', '') for c in cells]
-                    dimension_rows.append(cells)
-
-    # 如果格式二有数据，转置为格式一（企业为行）
-    if dimension_rows and not competitor_data:
-        num_companies = len(dimension_rows[0]) - 1 if dimension_rows else 0
-        for i in range(num_companies):
-            company_name = company_names[i] if i < len(company_names) else f"企业{i+1}"
-            row = [company_name]
-            for dim_row in dimension_rows:
-                if len(dim_row) > i + 1:
-                    row.append(dim_row[i + 1])
-                else:
-                    row.append('—')
-            while len(row) < 6:
-                row.append('—')
-            competitor_data.append(row[:6])
+                    competitor_data.append(cells[:6])
 
     # ===== 4. 提取人力资源要闻 =====
     news_items = []
@@ -181,7 +134,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号']
     in_summary = False
     for line in lines:
-        # 检查是否匹配关键结论标题
         matched = False
         for kw in summary_keywords:
             if kw in line:
@@ -189,9 +141,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 break
         if matched:
             in_summary = True
-            # 从同一行提取内容（支持 "关键结论：" 后跟内容）
             clean = line.strip()
-            # 去除标题标记
             for kw in summary_keywords:
                 clean = clean.replace(kw, '')
             clean = clean.strip()
@@ -201,7 +151,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 clean = clean[1:].strip()
             clean = re.sub(r'\*\*', '', clean)
             if clean and len(clean) > 10 and len(clean) < 300:
-                # 按序号分割多条结论
                 items = re.split(r'[①②③④⑤⑥⑦⑧⑨⑩]', clean)
                 items = [item.strip() for item in items if item.strip()]
                 if items:
