@@ -24,11 +24,11 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         elif '报告周期' in line or '发布日期' in line:
             report_date = line.strip()
 
-    # ===== 2. 提取本期摘要（关键结论） =====
+    # ===== 2. 提取关键结论（匹配多种标题） =====
     conclusions = []
     in_summary = False
     for line in lines:
-        if '本期摘要' in line or '本期核心摘要' in line:
+        if '本期摘要' in line or '本期核心摘要' in line or '本周关键结论' in line or '关键结论' in line:
             in_summary = True
             continue
         if in_summary:
@@ -150,26 +150,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_news_section and len(news_items) >= 5:
             break
 
-    if not news_items:
-        in_news_section = False
-        for line in lines:
-            if '人力资源要闻' in line:
-                in_news_section = True
-                continue
-            if in_news_section:
-                if line.startswith('##') and '要闻' not in line:
-                    break
-                clean = line.strip()
-                if clean.startswith('-') or clean.startswith('•'):
-                    clean = clean[1:].strip()
-                    if clean and len(clean) > 10 and len(clean) < 100:
-                        clean = re.sub(r'【来源.*?】', '', clean)
-                        clean = re.sub(r'〖来源.*?〗', '', clean)
-                        clean = clean.strip()
-                        news_items.append(clean)
-                    if len(news_items) >= 5:
-                        break
-
     # ===== 6. 提取竞品对比表 =====
     competitor_data = []
     in_competitor_table = False
@@ -202,11 +182,9 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_action_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 2:
-                # 跳过表头和重复标题
                 header_text = ''.join(cells)
                 if any(kw in header_text for kw in action_skip):
                     continue
-                # 跳过纯数字行和空行
                 if len(cells) >= 2:
                     first_cell = cells[0]
                     if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
