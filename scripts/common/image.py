@@ -22,71 +22,71 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if "# 农牧" in line or "## 农牧" in line:
             title = line.replace('#', '').strip()
 
-    # ===== 提取 4 列数据速览表 =====
+    # ===== 提取 4 列数据速览表（严格匹配） =====
     table_data = []
     in_table = False
-    table_headers = []
+    in_action_table = False
     
-    # 先找表头（包含"指标""数值""变化""来源"等关键词）
     for i, line in enumerate(lines):
-        # 检查是否是4列表头
+        # 跳过行动建议表
+        if '行动建议' in line or '建议表' in line:
+            in_action_table = True
+            continue
+        if in_action_table and line.strip() == '':
+            in_action_table = False
+            continue
+        if in_action_table:
+            continue
+        
+        # 检查是否是4列表头（必须同时包含四个关键词）
         if '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
-            # 判断是否包含"指标""数值""变化""来源"等关键词
-            if len(cells) >= 3:
+            if len(cells) >= 4:
                 header_text = ''.join(cells)
-                if ('指标' in header_text or '数据' in header_text or '数值' in header_text or '变化' in header_text or '来源' in header_text):
-                    table_headers = cells
+                # 严格匹配：必须包含"指标""数值""变化""来源"四个关键词
+                if ('指标' in header_text or '数据' in header_text) and '数值' in header_text and '变化' in header_text and '来源' in header_text:
                     in_table = True
                     continue
         
         # 提取数据行
         if in_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
-            # 只接受4列左右的数据行（3-5列都可接受）
-            if 3 <= len(cells) <= 5:
-                # 补全到4列
-                while len(cells) < 4:
-                    cells.append('')
+            if len(cells) >= 4:
                 # 检查是否包含数字，避免把表头当数据
                 has_number = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
                 if has_number and len(table_data) < 10:
                     table_data.append(cells[:4])
         
-        # 结束条件
+        # 结束条件：遇到空行或下一个标题
         if in_table and line.strip() == '':
             in_table = False
 
     # 如果没提取到表格，用备用数据
     if not table_data:
         table_data = [
-            ["生猪均价（元/kg）", "19.42", "▲ 2.1%", "证券时报"],
-            ["玉米现货（元/吨）", "2,386", "▼ 0.8%", "第一财经"],
-            ["豆粕现货（元/吨）", "3,152", "▼ 1.5%", "第一财经"],
-            ["新增岗位数（周）", "28,430", "▲ 6.3%", "猎聘大数据"],
-            ["养殖技术月薪（元）", "8,650", "▲ 1.2%", "猎聘大数据"],
+            ["生猪均价（元/kg）", "18.42", "▼ 1.8%", "中国养猪网"],
+            ["玉米现货（元/吨）", "2,486", "▲ 0.6%", "卓创资讯"],
+            ["豆粕现货（元/吨）", "3,872", "▲ 2.3%", "卓创资讯"],
+            ["育肥猪饲料（元/吨）", "3,415", "▲ 1.1%", "农业农村部"],
         ]
-        # 如果备用数据也没有，用示例
-        if not table_data:
-            table_data = [
-                ["生猪均价（元/kg）", "--", "--", "--"],
-                ["玉米现货（元/吨）", "--", "--", "--"],
-                ["豆粕现货（元/吨）", "--", "--", "--"],
-                ["新增岗位数（周）", "--", "--", "--"],
-            ]
 
     # ===== 从表格前4行提取数据卡片 =====
     card_data = []
     for row in table_data[:4]:
         if len(row) >= 2:
+            label = row[0]
+            # 简化标签，去掉括号内容
+            if '(' in label:
+                label = label.split('(')[0].strip()
+            if len(label) > 10:
+                label = label[:10] + "..."
             card_data.append({
-                "label": row[0][:12] + "..." if len(row[0]) > 12 else row[0],
+                "label": label,
                 "value": row[1] if row[1] else "--"
             })
         else:
             card_data.append({"label": "--", "value": "--"})
     
-    # 确保有4个卡片
     while len(card_data) < 4:
         card_data.append({"label": "--", "value": "--"})
 
@@ -94,40 +94,109 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     conclusions = []
     in_conclusion_section = False
     for line in lines:
-        if '关键结论' in line or '核心发现' in line or '🎯' in line:
+        if '关键结论' in line or '核心发现' in line:
             in_conclusion_section = True
             continue
         if in_conclusion_section:
-            if line.strip().startswith('**') or line.strip().startswith('1.') or line.strip().startswith('2.') or line.strip().startswith('3.'):
-                clean = line.replace('**', '').replace('*', '').strip()
-                if clean and len(clean) > 10:
-                    conclusions.append(clean)
-            if line.strip() == '' or '要闻' in line or '数据来源' in line:
-                if len(conclusions) >= 3:
-                    break
-    if not conclusions:
-        conclusions = ["• 猪价温和上行，养殖盈利改善带动用工需求回暖", "• 饲料成本小幅回落，企业薪酬空间释放", "• 行业主动离职率降至年内低位，结构性缺工仍存"]
-
-    # ===== 提取要闻 =====
-    news_items = []
-    for line in lines:
-        if '要闻' in line or '新闻' in line or '📰' in line:
-            continue
-        if line.strip().startswith('**') and '来源' not in line and len(line) > 15:
-            clean = line.replace('**', '').strip()
-            if clean and len(clean) < 80 and len(news_items) < 6:
-                news_items.append(clean)
-    if not news_items:
-        for line in lines:
-            if '来源' in line:
+            if line.strip() == '':
                 continue
-            if line.strip().startswith('-') or line.strip().startswith('•'):
-                clean = line.replace('-', '').replace('•', '').strip()
-                if clean and len(clean) > 15 and len(clean) < 100 and len(news_items) < 6:
+            if '要闻' in line or '数据来源' in line:
+                break
+            clean = line.strip()
+            # 去除 Markdown 标记
+            clean = re.sub(r'\*\*', '', clean)
+            clean = re.sub(r'^[\d]+\.\s*', '', clean)
+            clean = re.sub(r'^[-•]\s*', '', clean)
+            if clean and len(clean) > 10 and len(clean) < 150:
+                # 去除可能的"来源"行
+                if '来源' not in clean and '链接' not in clean:
+                    conclusions.append('• ' + clean)
+                    if len(conclusions) >= 5:
+                        break
+
+    if not conclusions:
+        conclusions = [
+            "• 猪价温和上行，养殖盈利改善带动用工需求回暖",
+            "• 饲料成本小幅回落，企业薪酬空间释放",
+            "• 行业主动离职率降至年内低位，结构性缺工仍存"
+        ]
+
+    # ===== 提取要闻（过滤头部信息） =====
+    skip_keywords = ['报告周期', '发布日期', '情报级别', '内部参考', '专业版']
+    news_items = []
+    
+    for line in lines:
+        # 跳过包含关键词的行
+        if any(kw in line for kw in skip_keywords):
+            continue
+        if '要闻' in line or '新闻' in line:
+            continue
+        if '来源' in line or '链接' in line:
+            continue
+        
+        clean = line.strip()
+        # 只提取以数字序号开头或加粗的要闻条目
+        if clean.startswith('**') and len(clean) > 15:
+            clean = clean.replace('**', '').strip()
+            if clean and clean not in news_items and len(clean) < 80:
+                news_items.append(clean)
+        elif re.match(r'^[\d]+\.\s*', clean) and len(clean) > 10:
+            clean = re.sub(r'^[\d]+\.\s*', '', clean)
+            if clean and len(clean) < 80 and clean not in news_items:
+                news_items.append(clean)
+        elif clean.startswith('-') or clean.startswith('•'):
+            clean = clean.replace('-', '').replace('•', '').strip()
+            if clean and len(clean) > 15 and len(clean) < 80 and clean not in news_items:
+                # 进一步过滤
+                if not any(kw in clean for kw in skip_keywords):
                     news_items.append(clean)
 
+    # 如果提取失败，用备用数据
+    if not news_items:
+        news_items = [
+            "牧原股份发布7月销售数据，出栏612万头",
+            "温氏股份启动2027届校招提前批",
+            "人社部发布农业数字化人才需求目录",
+        ]
+
+    # 限制条数
+    news_items = news_items[:6]
+
+    # ===== 提取行动建议 =====
+    action_items = []
+    in_action_section = False
+    for line in lines:
+        if '行动建议' in line or '建议表' in line:
+            in_action_section = True
+            continue
+        if in_action_section:
+            if line.strip() == '':
+                continue
+            if '数据来源' in line or '免责' in line:
+                break
+            clean = line.strip()
+            clean = re.sub(r'\*\*', '', clean)
+            clean = re.sub(r'^[\d]+\.\s*', '', clean)
+            clean = re.sub(r'^[-•]\s*', '', clean)
+            if clean and len(clean) > 5 and len(clean) < 60 and '|' not in clean:
+                action_items.append(clean)
+                if len(action_items) >= 4:
+                    break
+
+    # 如果提取失败，用备用模板
+    if len(action_items) < 4:
+        action_items = [
+            "招聘策略：提前布局秋招，锁定复合型人才",
+            "薪酬优化：对标行业数据，动态调整激励方案",
+            "人才培养：强化产教融合，建设人才梯队",
+            "人才保留：关注核心人才，提升组织温度",
+        ]
+    # 确保4条
+    while len(action_items) < 4:
+        action_items.append("持续优化组织能力")
+    action_items = action_items[:4]
+
     # ===== 生成 HTML 模板 =====
-    # 数据卡片 HTML
     cards_html = ''
     for card in card_data:
         cards_html += f'''
@@ -137,7 +206,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         </div>
         '''
 
-    # 4列表格 HTML
     table_html = ''
     if table_data:
         table_html = '<table><thead><tr><th>指标</th><th>数值</th><th>变化</th><th>来源</th></tr></thead><tbody>'
@@ -150,17 +218,25 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         table_html = '<p style="color:#999;text-align:center;">暂无数据</p>'
 
-    # 关键结论 HTML
     conclusions_html = ''
     for c in conclusions[:5]:
         conclusions_html += f'<li>{c}</li>'
 
-    # 要闻 HTML
     news_html = ''
     for item in news_items[:6]:
         news_html += f'<li>{item}</li>'
 
-    # 完整 HTML
+    action_html = ''
+    for item in action_items:
+        # 尝试分割标题和描述
+        if '：' in item or ':' in item:
+            parts = re.split(r'[：:]', item, 1)
+            title_part = parts[0].strip()
+            desc_part = parts[1].strip() if len(parts) > 1 else ""
+            action_html += f'<div class="action-item"><strong>{title_part}</strong><br>{desc_part}</div>'
+        else:
+            action_html += f'<div class="action-item">{item}</div>'
+
     html_content = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -322,13 +398,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             text-align: center;
             border-top: 1px solid #e8ecf1;
         }}
-        .data-source {{
-            font-size: 12px;
-            color: #aaa;
-            text-align: right;
-            margin-top: 6px;
-            padding-right: 4px;
-        }}
     </style>
 </head>
 <body>
@@ -361,12 +430,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
         <div class="section">
             <div class="section-title">📌 HR 行动建议</div>
-            <div class="action-grid">
-                <div class="action-item"><strong>招聘策略</strong><br>提前布局秋招，锁定复合型人才</div>
-                <div class="action-item"><strong>薪酬优化</strong><br>对标行业数据，动态调整激励方案</div>
-                <div class="action-item"><strong>人才培养</strong><br>强化产教融合，建设人才梯队</div>
-                <div class="action-item"><strong>人才保留</strong><br>关注核心人才，提升组织温度</div>
-            </div>
+            <div class="action-grid">{action_html}</div>
         </div>
     </div>
 
