@@ -89,8 +89,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     
                 header_text = ''.join(cells)
                 
-                # 格式一检测：企业为行（表头包含"企业"和"招聘策略"）
-                if '企业' in header_text and '招聘策略' in header_text:
+                # 格式一检测：企业为行（表头包含"企业"或"竞品企业" + "招聘策略"）
+                if ('企业' in header_text or '竞品企业' in header_text) and '招聘策略' in header_text:
                     competitor_format = 'company_rows'
                     continue
                 
@@ -181,9 +181,38 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号']
     in_summary = False
     for line in lines:
-        if any(kw in line for kw in summary_keywords):
+        # 检查是否匹配关键结论标题
+        matched = False
+        for kw in summary_keywords:
+            if kw in line:
+                matched = True
+                break
+        if matched:
             in_summary = True
+            # 从同一行提取内容（支持 "关键结论：" 后跟内容）
+            clean = line.strip()
+            # 去除标题标记
+            for kw in summary_keywords:
+                clean = clean.replace(kw, '')
+            clean = clean.strip()
+            if clean.startswith('：'):
+                clean = clean[1:].strip()
+            if clean.startswith(':'):
+                clean = clean[1:].strip()
+            clean = re.sub(r'\*\*', '', clean)
+            if clean and len(clean) > 10 and len(clean) < 300:
+                # 按序号分割多条结论
+                items = re.split(r'[①②③④⑤⑥⑦⑧⑨⑩]', clean)
+                items = [item.strip() for item in items if item.strip()]
+                if items:
+                    for item in items:
+                        item = re.sub(r'\*\*', '', item)
+                        if item:
+                            conclusions.append('• ' + item[:150])
+                else:
+                    conclusions.append('• ' + clean[:150])
             continue
+        
         if in_summary:
             if line.strip() == '':
                 continue
@@ -275,16 +304,13 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         first_line = value
         second_line = None
         
-        # 如果有 | 分隔符，拆分成两行
         if isinstance(value, str) and '|' in value:
             parts = value.split('|', 1)
             first_line = parts[0].strip()
             second_line = parts[1].strip()
-            # 处理第一行的箭头符号
             if first_line and first_line[0] in ['↑', '↓']:
                 first_line = f'<span class="up">{first_line[0]}</span>{first_line[1:]}'
         else:
-            # 没有分隔符，全部放在第一行
             first_line = value
         
         cards.append({
