@@ -24,7 +24,12 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         elif '报告周期' in line or '发布日期' in line:
             report_date = line.strip()
 
-    # ===== 2. 提取关键结论（增加对"本期关键结论"的支持） =====
+    # 如果没提取到具体日期，用今天的日期
+    if not report_date:
+        import datetime
+        report_date = datetime.datetime.now().strftime("%Y年%m月%d日")
+
+    # ===== 2. 提取关键结论 =====
     conclusions = []
     in_summary = False
     for line in lines:
@@ -47,56 +52,43 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 3. 提取核心数据速览表（优先）或行业薪酬趋势表（备用） =====
+    # ===== 3. 提取核心数据速览表 =====
     table_data = []
     in_metric_table = False
-    table_type = None  # 'core' 或 'salary'
-    used_table_title = None
+    table_type = None
 
-    for i, line in enumerate(lines):
-        # 优先匹配核心数据速览
+    for line in lines:
         if '核心数据速览' in line:
             in_metric_table = True
             table_type = 'core'
-            used_table_title = '核心数据速览'
             continue
-        # 备用：匹配行业薪酬趋势
         if '行业薪酬趋势' in line or '### 行业薪酬趋势' in line:
-            in_metric_table = True
-            table_type = 'salary'
-            used_table_title = '行业薪酬趋势'
+            if not in_metric_table:  # 如果核心数据速览已经匹配到，不覆盖
+                in_metric_table = True
+                table_type = 'salary'
             continue
         
         if in_metric_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
-                # 跳过表头
                 if '关键指标' in header_text and '本期数据' in header_text:
                     continue
                 if '岗位类别' in header_text and '平均月薪' in header_text:
                     continue
                 if '岗位类别' in header_text and '2026年' in header_text:
                     continue
-                # 检查是否是数据行
                 has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
                 if has_data and len(cells) >= 3:
                     while len(cells) < 3:
                         cells.append('')
                     table_data.append(cells[:3])
         
-        # 遇到下一个二级标题时结束
-        if in_metric_table and line.startswith('##') and used_table_title not in line:
+        if in_metric_table and line.startswith('##') and '核心数据' not in line and '行业薪酬' not in line:
             in_metric_table = False
             table_type = None
-            used_table_title = None
-            continue
-        if in_metric_table and line.startswith('###') and '行业薪酬' not in line and '核心数据' not in line:
-            in_metric_table = False
-            table_type = None
-            used_table_title = None
 
-    # ===== 4. 从表格数据提取数据卡片（按行号精准映射） =====
+    # ===== 4. 从表格数据提取数据卡片 =====
     card_values = {
         '招聘热度': '--',
         '薪酬变化': '--',
@@ -104,34 +96,54 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         '政策动向': '暂无'
     }
 
-    # 优先使用核心数据速览表格（按行号精准映射）
-    if table_type == 'core' and len(table_data) >= 6:
-        # 行1: 行业整体招聘热度 → 招聘热度
+    if table_type == 'core' and len(table_data) >= 5:
+        # 核心数据速览：按行号精准映射
+        # 行1: 行业整体招聘热度
         if len(table_data[0]) >= 2 and table_data[0][1]:
-            card_values['招聘热度'] = table_data[0][1]
-        # 行4: 兽医/育种专家岗薪酬 → 薪酬变化
-        if len(table_data[3]) >= 2 and table_data[3][1]:
-            card_values['薪酬变化'] = table_data[3][1]
-        # 行6: 行业主动离职率 → 人才流动
-        if len(table_data[5]) >= 2 and table_data[5][1]:
-            card_values['人才流动'] = table_data[5][1]
-    else:
-        # 备用：用关键词匹配
+            val = table_data[0][1]
+            # 精简格式：提取数值和趋势
+            if '下降' in val or '下跌' in val:
+                num = re.search(r'([\d.]+%?)', val)
+                card_values['招聘热度'] = f"↓ {num.group(1) if num else val}"
+            elif '上升' in val or '上涨' in val:
+                num = re.search(r'([\d.]+%?)', val)
+                card_values['招聘热度'] = f"↑ {num.group(1) if num else val}"
+            else:
+                card_values['招聘热度'] = val
+        # 行3或行4: 薪酬相关
+        if len(table_data) >= 4 and len(table_data[3]) >= 2 and table_data[3][1]:
+            val = table_data[3][1]
+            if '上涨' in val or '上升' in val:
+                num = re.search(r'([\d.]+%?(\s*-\s*[\d.]+%?)?)', val)
+                card_values['薪酬变化'] = f"↑ {num.group(1) if num else val}"
+            elif '下降' in val or '下跌' in val:
+                num = re.search(r'([\d.]+%?)', val)
+                card_values['薪酬变化'] = f"↓ {num.group(1) if num else val}"
+            else:
+                card_values['薪酬变化'] = val
+        # 行5或行6: 离职率
         for row in table_data:
+            if len(row) >= 2 and ('离职率' in row[0] or '流动率' in row[0]):
+                val = row[1]
+                num = re.search(r'([\d.]+%?)', val)
+                card_values['人才流动'] = num.group(1) if num else val
+                break
+    elif table_type == 'salary' and len(table_data) >= 4:
+        # 行业薪酬趋势：取前4个岗位
+        for i, row in enumerate(table_data[:4]):
             if len(row) >= 2:
-                indicator = row[0]
-                value = row[1] if row[1] else ''
-                if any(kw in indicator for kw in ['招聘热度', '整体招聘']):
-                    if value:
-                        card_values['招聘热度'] = value
-                if any(kw in indicator for kw in ['兽医', '育种专家']):
-                    if value:
-                        card_values['薪酬变化'] = value
-                if any(kw in indicator for kw in ['离职率']):
-                    if value:
-                        card_values['人才流动'] = value
+                label = row[0]
+                val = row[1]
+                if i == 0:
+                    card_values['招聘热度'] = val
+                elif i == 1:
+                    card_values['薪酬变化'] = val
+                elif i == 2:
+                    card_values['人才流动'] = val
+                elif i == 3:
+                    card_values['政策动向'] = val
 
-    # 提取政策动向（从3.3政策环境支持）
+    # 提取政策动向
     in_policy_section = False
     policy_title = ""
     for line in lines:
@@ -221,7 +233,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     first_cell_clean = first_cell.replace('**', '').strip()
                     if any(kw in first_cell_clean for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
                         while len(cells) < 6:
-                            cells.append('')
+                            cells.append('—')
                         cells = [c.replace('**', '') for c in cells]
                         competitor_data.append(cells[:6])
         
@@ -246,7 +258,9 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(cells) >= 2:
                     first_cell = cells[0]
                     if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
-                        action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
+                        # 清理 Markdown 加粗标记
+                        cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
+                        action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
         if in_action_table and line.startswith('##') and '行动' not in line:
             break
 
@@ -270,7 +284,9 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         for row in table_data[:10]:
             table_html += '<tr>'
             for cell in row:
-                table_html += f'<td>{cell if cell else "--"}</td>'
+                # 清理加粗标记
+                clean_cell = re.sub(r'\*\*', '', cell)
+                table_html += f'<td>{clean_cell if clean_cell else "--"}</td>'
             table_html += '</tr>'
         table_html += '</tbody></table>'
     else:
@@ -310,8 +326,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 desc_part = row[1] if len(row) > 1 else ""
                 action_html += f'''
                 <div class="action-item">
-                    <strong>{title_part}</strong><br>
-                    {desc_part}
+                    <div class="action-title">{title_part}</div>
+                    <div class="action-desc">{desc_part}</div>
                 </div>
                 '''
     else:
@@ -371,16 +387,30 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         .card {{
             background: white;
             border-radius: 10px;
-            padding: 16px 20px 14px 20px;
+            padding: 16px 12px 14px 12px;
             text-align: center;
             box-shadow: 0 1px 4px rgba(0,0,0,0.06);
             border-left: 4px solid #1a3a5c;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 80px;
+            min-width: 0;
+            word-break: break-word;
         }}
         .card-value {{
-            font-size: 28px;
+            font-size: 26px;
             font-weight: 700;
             color: #1a3a5c;
             line-height: 1.2;
+            max-width: 100%;
+        }}
+        .card-value .up {{
+            color: #2e7d32;
+        }}
+        .card-value .down {{
+            color: #c62828;
         }}
         .card-label {{
             font-size: 13px;
@@ -467,8 +497,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             border-left: 3px solid #1a3a5c;
             font-size: 13px;
         }}
-        .action-item strong {{
+        .action-item .action-title {{
+            font-weight: 700;
             color: #1a3a5c;
+            margin-bottom: 2px;
+        }}
+        .action-item .action-desc {{
+            color: #333;
+            line-height: 1.5;
+            font-size: 13px;
         }}
         .footer {{
             background: #f5f7fa;
@@ -478,6 +515,12 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             text-align: center;
             border-top: 1px solid #e8ecf1;
         }}
+        .up {{
+            color: #2e7d32;
+        }}
+        .down {{
+            color: #c62828;
+        }}
     </style>
 </head>
 <body>
@@ -485,7 +528,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     <div class="header">
         <div class="header-title">{title}</div>
         <div class="header-sub">
-            <span>{report_date if report_date else "2026年8月"}</span>
+            <span>{report_date}</span>
             <span>内部参考 · 限时阅读</span>
         </div>
     </div>
@@ -519,7 +562,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         </div>
     </div>
 
-    <div class="footer">数据来源：公开权威渠道 · 仅供内部参考 · 生成时间：{report_date if report_date else "2026年8月"}</div>
+    <div class="footer">数据来源：公开权威渠道 · 仅供内部参考 · 生成时间：{report_date}</div>
 </div>
 </body>
 </html>'''
