@@ -28,7 +28,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     conclusions = []
     in_summary = False
     for line in lines:
-        if '本期摘要' in line or '**本期摘要**' in line or '本期核心摘要' in line:
+        if '本期摘要' in line or '本期核心摘要' in line:
             in_summary = True
             continue
         if in_summary:
@@ -47,7 +47,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 3. 提取核心数据速览表（与周报原文匹配） =====
+    # ===== 3. 提取核心数据速览表 =====
     table_data = []
     in_metric_table = False
 
@@ -60,10 +60,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
-                # 匹配表头："关键指标" + "本期数据"
                 if '关键指标' in header_text and '本期数据' in header_text:
                     continue
-                # 检查是否是数据行（包含数字或%）
                 has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
                 if has_data and len(cells) >= 3:
                     while len(cells) < 3:
@@ -85,20 +83,17 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if len(row) >= 2:
             indicator = row[0]
             value = row[1] if row[1] else ''
-            # 匹配招聘热度
             if any(kw in indicator for kw in ['招聘热度', '生猪养殖岗', '招聘']):
                 if value:
                     card_values['招聘热度'] = value
-            # 匹配薪酬变化
             if any(kw in indicator for kw in ['薪酬', '兽医', '月薪']):
                 if value:
                     card_values['薪酬变化'] = value
-            # 匹配人才流动
             if any(kw in indicator for kw in ['流动率', '离职', '技术岗']):
                 if value:
                     card_values['人才流动'] = value
     
-    # 提取政策动向：查找 "政策" 板块
+    # 提取政策动向
     in_policy_section = False
     policy_title = ""
     for line in lines:
@@ -155,7 +150,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_news_section and len(news_items) >= 5:
             break
 
-    # 备用：从列表中提取
     if not news_items:
         in_news_section = False
         for line in lines:
@@ -180,16 +174,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     competitor_data = []
     in_competitor_table = False
     for line in lines:
-        if '竞品HR动态' in line or '## 二、' in line:
+        if '竞品HR动态' in line or '## 二、行业竞品HR动态' in line:
             in_competitor_table = True
             continue
         if in_competitor_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 5:
-                # 跳过表头
-                if '企业' in ''.join(cells) or '招聘策略' in ''.join(cells):
+                header_text = ''.join(cells)
+                if '企业' in header_text and '招聘策略' in header_text:
                     continue
-                # 检查是否包含竞品企业名称
                 if len(cells) >= 5 and any(kw in cells[0] for kw in ['牧原', '温氏', '海大', '双胞胎', '正大', '集团']):
                     while len(cells) < 6:
                         cells.append('')
@@ -197,19 +190,11 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_competitor_table and line.startswith('##') and '竞品' not in line:
             in_competitor_table = False
 
-    # 如果没匹配到表格，尝试从 Markdown 列表中提取
-    if not competitor_data:
-        for line in lines:
-            if '**牧原股份**' in line or '**温氏股份**' in line or '**海大集团**' in line:
-                clean = line.strip()
-                clean = re.sub(r'\*\*', '', clean)
-                if clean and len(clean) > 5:
-                    # 简单提取名称和第一项内容
-                    competitor_data.append([clean, '详见原文', '详见原文', '详见原文', '详见原文'])
-
     # ===== 7. 提取行动建议 =====
     action_items = []
     in_action_table = False
+    action_skip = ['HR行动建议', '维度', '具体建议', '数据/案例支撑']
+    
     for line in lines:
         if '行动建议' in line or '## 四、' in line:
             in_action_table = True
@@ -217,15 +202,19 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_action_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 2:
-                if '维度' in ''.join(cells):
+                # 跳过表头和重复标题
+                header_text = ''.join(cells)
+                if any(kw in header_text for kw in action_skip):
                     continue
+                # 跳过纯数字行和空行
                 if len(cells) >= 2:
-                    action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
+                    first_cell = cells[0]
+                    if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
+                        action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
         if in_action_table and line.startswith('##') and '行动' not in line:
             break
 
     # ===== 生成 HTML 模板 =====
-    # 数据卡片
     cards_html = ''
     for card in cards:
         cards_html += f'''
@@ -235,7 +224,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         </div>
         '''
 
-    # 数据速览表
     table_html = ''
     if table_data:
         table_html = '<table><thead><tr><th>指标</th><th>本期数据</th><th>趋势</th></tr></thead><tbody>'
@@ -248,7 +236,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         table_html = '<p style="color:#999;text-align:center;">暂无数据</p>'
 
-    # 关键结论
     conclusions_html = ''
     if conclusions:
         for c in conclusions[:5]:
@@ -256,7 +243,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         conclusions_html = '<li>暂无关键结论</li>'
 
-    # 要闻
     news_html = ''
     if news_items:
         for item in news_items[:6]:
@@ -264,7 +250,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         news_html = '<li>暂无要闻</li>'
 
-    # 竞品对比表
     competitor_html = ''
     if competitor_data:
         competitor_html = '<table><thead><tr><th>企业</th><th>招聘策略</th><th>人才培养</th><th>薪酬激励</th><th>组织/人效</th><th>最新动态</th></tr></thead><tbody>'
@@ -277,7 +262,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
-    # 行动建议
     action_html = ''
     if action_items:
         for row in action_items[:4]:
@@ -293,7 +277,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         action_html = '<div class="action-item">暂无行动建议</div>'
 
-    # 完整 HTML
     html_content = f'''<!DOCTYPE html>
 <html>
 <head>
