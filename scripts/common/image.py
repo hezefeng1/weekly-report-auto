@@ -34,7 +34,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         import datetime
         report_date = datetime.datetime.now().strftime("%Y年%m月%d日")
 
-    # ===== 2. 提取核心数据速览表（不依赖章节号） =====
+    # ===== 2. 提取核心数据速览表 =====
     table_data = []
     in_table = False
     table_end_markers = ['人力资源要闻', '竞品HR动态', '行动建议', '专项关注']
@@ -56,19 +56,28 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
-                # 跳过表头
-                if '关键指标' in header_text and ('本期数据' in header_text or '本周数据' in header_text):
-                    continue
-                if '指标' in header_text and '本期数据' in header_text:
-                    continue
-                # 检查是否包含数据
+                # 跳过表头 - 支持更多变体
+                # 匹配：关键指标 | 本期数据 / 本周数据 / 本期动态 / 本期
+                if '关键指标' in header_text:
+                    is_header = False
+                    for kw in ['本期数据', '本周数据', '本期动态', '本期', '趋势']:
+                        if kw in header_text:
+                            is_header = True
+                            break
+                    if is_header:
+                        continue
+                # 检查是否包含数据（数字、%或数据关键词）
                 has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
-                if has_data:
+                # 如果第一列包含加粗的指标名，也算有数据
+                has_indicator = any(kw in cells[0] for kw in ['招聘', '薪酬', '流动', '政策', '兽医', '育种', '养殖'])
+                if has_data or has_indicator:
                     while len(cells) < 3:
                         cells.append('')
+                    # 清理加粗标记
+                    cells = [re.sub(r'\*\*', '', c) for c in cells]
                     table_data.append(cells[:3])
     
-    # ===== 3. 从表格中提取卡片（关键词匹配） =====
+    # ===== 3. 从表格中提取卡片 =====
     card_values = {
         '招聘热度': '--',
         '薪酬变化': '--',
@@ -79,7 +88,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     for row in table_data:
         if len(row) >= 2:
             label = row[0]
-            value = row[1]
+            value = row[1] if row[1] else ''
             if any(kw in label for kw in ['招聘热度', '整体招聘', '行业招聘', '招聘']):
                 if value:
                     card_values['招聘热度'] = value
@@ -89,7 +98,20 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if any(kw in label for kw in ['离职率', '流动率', '人才流动']):
                 if value:
                     card_values['人才流动'] = value
+            if any(kw in label for kw in ['政策', '动向', '职称']):
+                if value:
+                    card_values['政策动向'] = value
     
+    # 如果卡片还是空的，尝试从表格中按行号补数据
+    if card_values['招聘热度'] == '--' and len(table_data) > 0:
+        card_values['招聘热度'] = table_data[0][1] if len(table_data[0]) >= 2 else '--'
+    if card_values['薪酬变化'] == '--' and len(table_data) > 1:
+        card_values['薪酬变化'] = table_data[1][1] if len(table_data[1]) >= 2 else '--'
+    if card_values['人才流动'] == '--' and len(table_data) > 2:
+        card_values['人才流动'] = table_data[2][1] if len(table_data[2]) >= 2 else '--'
+    if card_values['政策动向'] == '暂无' and len(table_data) > 3:
+        card_values['政策动向'] = table_data[3][1] if len(table_data[3]) >= 2 else '暂无'
+
     # ===== 4. 提取关键结论 =====
     conclusions = []
     summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号']
@@ -165,13 +187,13 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(cells) >= 4:
                     header_text = ''.join(cells)
                     # 跳过表头
-                    if '企业' in header_text and '招聘策略' in header_text:
+                    if '企业' in header_text and ('招聘策略' in header_text or '人才培养' in header_text):
                         continue
                     if '对比维度' in header_text:
                         continue
                     if '招聘策略' in header_text and '人才培养' in header_text:
                         continue
-                    # 检查是否是竞品行（包含竞品企业名称）
+                    # 检查是否是竞品行
                     first_cell = cells[0].replace('**', '').strip()
                     if any(kw in first_cell for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
                         while len(cells) < 6:
@@ -203,31 +225,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                             cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                             action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
 
-    # ===== 8. 提取政策动向 =====
-    policy_title = ""
-    in_policy = False
-    for line in lines:
-        if '政策环境支持' in line:
-            in_policy = True
-            continue
-        if in_policy:
-            if line.startswith('##') or line.startswith('###'):
-                in_policy = False
-                continue
-            if line.strip() == '':
-                continue
-            clean = line.strip()
-            if clean.startswith('-') or clean.startswith('•'):
-                clean = clean[1:].strip()
-            clean = re.sub(r'\[.*?\]\(.*?\)', '', clean)
-            clean = re.sub(r'\*\*', '', clean)
-            if clean and len(clean) > 5 and len(clean) < 80:
-                policy_title = clean[:20] + "..." if len(clean) > 20 else clean
-                break
-    if policy_title:
-        card_values['政策动向'] = policy_title
-
-    # ===== 9. 构建卡片 =====
+    # ===== 8. 构建卡片 =====
     cards = [
         {"label": "招聘热度", "value": card_values['招聘热度']},
         {"label": "薪酬变化", "value": card_values['薪酬变化']},
@@ -235,7 +233,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         {"label": "政策动向", "value": card_values['政策动向']},
     ]
 
-    # ===== 10. 生成 HTML =====
+    # ===== 9. 生成 HTML =====
     cards_html = ''
     for card in cards:
         value = card['value']
