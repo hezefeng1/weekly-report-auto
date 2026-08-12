@@ -24,11 +24,11 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         elif '报告周期' in line or '发布日期' in line:
             report_date = line.strip()
 
-    # ===== 2. 提取关键结论 =====
+    # ===== 2. 提取关键结论（增加对"本期关键结论"的支持） =====
     conclusions = []
     in_summary = False
     for line in lines:
-        if '本期摘要' in line or '本期核心摘要' in line or '本周关键结论' in line or '关键结论' in line:
+        if '本期摘要' in line or '本期核心摘要' in line or '本周关键结论' in line or '关键结论' in line or '本期关键结论' in line:
             in_summary = True
             continue
         if in_summary:
@@ -47,31 +47,56 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 3. 提取核心数据速览表 =====
+    # ===== 3. 提取核心数据速览表（优先）或行业薪酬趋势表（备用） =====
     table_data = []
     in_metric_table = False
+    table_type = None  # 'core' 或 'salary'
+    used_table_title = None
 
-    for line in lines:
+    for i, line in enumerate(lines):
+        # 优先匹配核心数据速览
         if '核心数据速览' in line:
             in_metric_table = True
+            table_type = 'core'
+            used_table_title = '核心数据速览'
+            continue
+        # 备用：匹配行业薪酬趋势
+        if '行业薪酬趋势' in line or '### 行业薪酬趋势' in line:
+            in_metric_table = True
+            table_type = 'salary'
+            used_table_title = '行业薪酬趋势'
             continue
         
         if in_metric_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
+                # 跳过表头
                 if '关键指标' in header_text and '本期数据' in header_text:
                     continue
+                if '岗位类别' in header_text and '平均月薪' in header_text:
+                    continue
+                if '岗位类别' in header_text and '2026年' in header_text:
+                    continue
+                # 检查是否是数据行
                 has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
                 if has_data and len(cells) >= 3:
                     while len(cells) < 3:
                         cells.append('')
                     table_data.append(cells[:3])
         
-        if in_metric_table and line.startswith('##') and '核心数据' not in line:
+        # 遇到下一个二级标题时结束
+        if in_metric_table and line.startswith('##') and used_table_title not in line:
             in_metric_table = False
+            table_type = None
+            used_table_title = None
+            continue
+        if in_metric_table and line.startswith('###') and '行业薪酬' not in line and '核心数据' not in line:
+            in_metric_table = False
+            table_type = None
+            used_table_title = None
 
-    # ===== 4. 从指标表提取数据卡片 =====
+    # ===== 4. 从表格数据提取数据卡片 =====
     card_values = {
         '招聘热度': '--',
         '薪酬变化': '--',
@@ -79,25 +104,45 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         '政策动向': '暂无'
     }
     
-    for row in table_data:
-        if len(row) >= 2:
-            indicator = row[0]
-            value = row[1] if row[1] else ''
-            if any(kw in indicator for kw in ['招聘热度', '生猪养殖岗', '招聘']):
-                if value:
-                    card_values['招聘热度'] = value
-            if any(kw in indicator for kw in ['薪酬', '兽医', '月薪']):
-                if value:
-                    card_values['薪酬变化'] = value
-            if any(kw in indicator for kw in ['流动率', '离职', '技术岗']):
-                if value:
-                    card_values['人才流动'] = value
-    
-    # 提取政策动向
+    # 根据表格类型提取卡片
+    if table_type == 'core':
+        # 核心数据速览：按关键词匹配
+        for row in table_data:
+            if len(row) >= 2:
+                indicator = row[0]
+                value = row[1] if row[1] else ''
+                if any(kw in indicator for kw in ['招聘热度', '生猪养殖岗', '招聘']):
+                    if value:
+                        card_values['招聘热度'] = value
+                if any(kw in indicator for kw in ['薪酬', '兽医', '月薪']):
+                    if value:
+                        card_values['薪酬变化'] = value
+                if any(kw in indicator for kw in ['流动率', '离职', '技术岗']):
+                    if value:
+                        card_values['人才流动'] = value
+    else:
+        # 行业薪酬趋势：取前4个岗位的薪酬作为卡片
+        # 标签取岗位名，数值取月薪
+        for row in table_data[:4]:
+            if len(row) >= 2:
+                label = row[0]
+                value = row[1] if row[1] else ''
+                # 简化标签
+                if '场长' in label:
+                    card_values['招聘热度'] = value  # 场长薪酬作为招聘热度
+                elif '兽医' in label or '动保' in label:
+                    card_values['薪酬变化'] = value  # 兽医薪酬作为薪酬变化
+                elif '智能化' in label or '工程师' in label:
+                    card_values['人才流动'] = value  # 智能化岗位薪酬作为人才流动
+                elif '一线' in label or '技工' in label:
+                    if card_values['政策动向'] == '暂无':
+                        card_values['政策动向'] = value
+
+    # 提取政策动向（从3.3政策环境支持）
     in_policy_section = False
     policy_title = ""
     for line in lines:
-        if '政策环境支持' in line or '政策' in line and '补贴' in line:
+        if '政策环境支持' in line or '### 3.3' in line:
             in_policy_section = True
             continue
         if in_policy_section:
@@ -108,6 +153,9 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             clean = line.strip()
             if clean.startswith('-') or clean.startswith('•'):
                 clean = clean[1:].strip()
+            # 去除链接和加粗
+            clean = re.sub(r'\[.*?\]\(.*?\)', '', clean)
+            clean = re.sub(r'\*\*', '', clean)
             if clean and len(clean) > 5 and len(clean) < 80:
                 policy_title = clean[:20] + "..." if len(clean) > 20 else clean
                 break
@@ -142,6 +190,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if title_text and len(title_text) > 5:
                     display_text = title_text
                     if source_text:
+                        # 提取来源简称
+                        if '巨潮资讯' in source_text:
+                            source_text = '巨潮'
+                        elif '证券时报' in source_text:
+                            source_text = '证券时报'
+                        elif '第一财经' in source_text:
+                            source_text = '第一财经'
+                        else:
+                            source_text = source_text[:6]
                         display_text += f"（{source_text}）"
                     if len(display_text) > 60:
                         display_text = display_text[:60] + "..."
@@ -149,26 +206,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         
         if in_news_section and len(news_items) >= 5:
             break
-
-    if not news_items:
-        in_news_section = False
-        for line in lines:
-            if '人力资源要闻' in line:
-                in_news_section = True
-                continue
-            if in_news_section:
-                if line.startswith('##') and '要闻' not in line:
-                    break
-                clean = line.strip()
-                if clean.startswith('-') or clean.startswith('•'):
-                    clean = clean[1:].strip()
-                    if clean and len(clean) > 10 and len(clean) < 100:
-                        clean = re.sub(r'【来源.*?】', '', clean)
-                        clean = re.sub(r'〖来源.*?〗', '', clean)
-                        clean = clean.strip()
-                        news_items.append(clean)
-                    if len(news_items) >= 5:
-                        break
 
     # ===== 6. 提取竞品对比表 =====
     competitor_data = []
@@ -182,21 +219,18 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if in_competitor_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 5:
-                # 跳过表头
                 header_text = ''.join(cells)
                 if '企业' in header_text and '招聘策略' in header_text:
                     continue
                 if '招聘策略' in header_text and '人才培养' in header_text:
                     continue
                 
-                # 检查是否是竞品数据行（支持带**加粗的格式）
                 if len(cells) >= 5:
                     first_cell = cells[0]
                     first_cell_clean = first_cell.replace('**', '').strip()
                     if any(kw in first_cell_clean for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
                         while len(cells) < 6:
                             cells.append('')
-                        # 清理加粗标记
                         cells = [c.replace('**', '') for c in cells]
                         competitor_data.append(cells[:6])
         
@@ -237,7 +271,12 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     table_html = ''
     if table_data:
-        table_html = '<table><thead><tr><th>指标</th><th>本期数据</th><th>趋势</th></tr></thead><tbody>'
+        # 根据表格类型决定表头
+        if table_type == 'core':
+            headers = ['指标', '本期数据', '趋势']
+        else:
+            headers = ['岗位类别', '平均月薪', '趋势']
+        table_html = f'<table><thead><tr><th>{headers[0]}</th><th>{headers[1]}</th><th>{headers[2]}</th></tr></thead><tbody>'
         for row in table_data[:10]:
             table_html += '<tr>'
             for cell in row:
