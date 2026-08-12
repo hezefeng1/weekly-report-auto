@@ -40,24 +40,17 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     table_end_markers = ['人力资源要闻', '竞品HR动态', '行动建议', '专项关注']
     
     for i, line in enumerate(lines):
-        # 触发条件：包含"核心数据速览"的行
         if '核心数据速览' in line:
             in_table = True
             continue
-        
-        # 结束条件：进入下一个板块
         if in_table and line.startswith('##'):
             if any(marker in line for marker in table_end_markers):
                 in_table = False
                 continue
-        
-        # 提取表格行
         if in_table and '|' in line and '---' not in line:
             cells = [c.strip() for c in line.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
-                # 跳过表头 - 支持更多变体
-                # 匹配：关键指标 | 本期数据 / 本周数据 / 本期动态 / 本期
                 if '关键指标' in header_text:
                     is_header = False
                     for kw in ['本期数据', '本周数据', '本期动态', '本期', '趋势']:
@@ -66,78 +59,43 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                             break
                     if is_header:
                         continue
-                # 检查是否包含数据（数字、%或数据关键词）
                 has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
-                # 如果第一列包含加粗的指标名，也算有数据
                 has_indicator = any(kw in cells[0] for kw in ['招聘', '薪酬', '流动', '政策', '兽医', '育种', '养殖'])
                 if has_data or has_indicator:
                     while len(cells) < 3:
                         cells.append('')
-                    # 清理加粗标记
                     cells = [re.sub(r'\*\*', '', c) for c in cells]
                     table_data.append(cells[:3])
-    
-    # ===== 3. 从表格中提取卡片 =====
-    card_values = {
-        '招聘热度': '--',
-        '薪酬变化': '--',
-        '人才流动': '--',
-        '政策动向': '暂无'
-    }
 
-    for row in table_data:
-        if len(row) >= 2:
-            label = row[0]
-            value = row[1] if row[1] else ''
-            if any(kw in label for kw in ['招聘热度', '整体招聘', '行业招聘', '招聘']):
-                if value:
-                    card_values['招聘热度'] = value
-            if any(kw in label for kw in ['薪酬', '月薪', '兽医', '育种', '场长', '重点岗位', '岗位薪酬']):
-                if value:
-                    card_values['薪酬变化'] = value
-            if any(kw in label for kw in ['离职率', '流动率', '人才流动']):
-                if value:
-                    card_values['人才流动'] = value
-            if any(kw in label for kw in ['政策', '动向', '职称']):
-                if value:
-                    card_values['政策动向'] = value
-    
-    # 如果卡片还是空的，尝试从表格中按行号补数据
-    if card_values['招聘热度'] == '--' and len(table_data) > 0:
-        card_values['招聘热度'] = table_data[0][1] if len(table_data[0]) >= 2 else '--'
-    if card_values['薪酬变化'] == '--' and len(table_data) > 1:
-        card_values['薪酬变化'] = table_data[1][1] if len(table_data[1]) >= 2 else '--'
-    if card_values['人才流动'] == '--' and len(table_data) > 2:
-        card_values['人才流动'] = table_data[2][1] if len(table_data[2]) >= 2 else '--'
-    if card_values['政策动向'] == '暂无' and len(table_data) > 3:
-        card_values['政策动向'] = table_data[3][1] if len(table_data[3]) >= 2 else '暂无'
-
-    # ===== 4. 提取关键结论 =====
-    conclusions = []
-    summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号']
-    in_summary = False
+    # ===== 3. 提取竞品对比表 =====
+    competitor_data = []
+    in_competitor = False
     for line in lines:
-        if any(kw in line for kw in summary_keywords):
-            in_summary = True
+        if '竞品HR动态' in line or '竞品对比' in line or '行业竞品HR动态' in line:
+            in_competitor = True
             continue
-        if in_summary:
-            if line.strip() == '':
+        if in_competitor:
+            if line.startswith('##') and '竞品' not in line and 'HR动态' not in line:
+                in_competitor = False
                 continue
-            if line.startswith('##') or line.startswith('---'):
-                in_summary = False
-                continue
-            clean = line.strip()
-            if clean.startswith('-'):
-                clean = clean[1:].strip()
-            if clean.startswith('>'):
-                clean = clean[1:].strip()
-            clean = re.sub(r'\*\*', '', clean)
-            if clean and len(clean) > 10 and len(clean) < 250:
-                conclusions.append('• ' + clean)
-                if len(conclusions) >= 5:
-                    break
+            if '|' in line and '---' not in line:
+                cells = [c.strip() for c in line.split('|') if c.strip()]
+                if len(cells) >= 4:
+                    header_text = ''.join(cells)
+                    if '企业' in header_text and ('招聘策略' in header_text or '人才培养' in header_text):
+                        continue
+                    if '对比维度' in header_text:
+                        continue
+                    if '招聘策略' in header_text and '人才培养' in header_text:
+                        continue
+                    first_cell = cells[0].replace('**', '').strip()
+                    if any(kw in first_cell for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
+                        while len(cells) < 6:
+                            cells.append('—')
+                        cells = [c.replace('**', '') for c in cells]
+                        competitor_data.append(cells[:6])
 
-    # ===== 5. 提取人力资源要闻 =====
+    # ===== 4. 提取人力资源要闻 =====
     news_items = []
     in_news = False
     for line in lines:
@@ -171,37 +129,32 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if len(news_items) >= 5:
             break
 
-    # ===== 6. 提取竞品HR策略对比表 =====
-    competitor_data = []
-    in_competitor = False
+    # ===== 5. 提取关键结论 =====
+    conclusions = []
+    summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号']
+    in_summary = False
     for line in lines:
-        if '竞品HR动态' in line or '竞品对比' in line or '行业竞品HR动态' in line:
-            in_competitor = True
+        if any(kw in line for kw in summary_keywords):
+            in_summary = True
             continue
-        if in_competitor:
-            if line.startswith('##') and '竞品' not in line and 'HR动态' not in line:
-                in_competitor = False
+        if in_summary:
+            if line.strip() == '':
                 continue
-            if '|' in line and '---' not in line:
-                cells = [c.strip() for c in line.split('|') if c.strip()]
-                if len(cells) >= 4:
-                    header_text = ''.join(cells)
-                    # 跳过表头
-                    if '企业' in header_text and ('招聘策略' in header_text or '人才培养' in header_text):
-                        continue
-                    if '对比维度' in header_text:
-                        continue
-                    if '招聘策略' in header_text and '人才培养' in header_text:
-                        continue
-                    # 检查是否是竞品行
-                    first_cell = cells[0].replace('**', '').strip()
-                    if any(kw in first_cell for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
-                        while len(cells) < 6:
-                            cells.append('—')
-                        cells = [c.replace('**', '') for c in cells]
-                        competitor_data.append(cells[:6])
-    
-    # ===== 7. 提取HR行动建议 =====
+            if line.startswith('##') or line.startswith('---'):
+                in_summary = False
+                continue
+            clean = line.strip()
+            if clean.startswith('-'):
+                clean = clean[1:].strip()
+            if clean.startswith('>'):
+                clean = clean[1:].strip()
+            clean = re.sub(r'\*\*', '', clean)
+            if clean and len(clean) > 10 and len(clean) < 250:
+                conclusions.append('• ' + clean)
+                if len(conclusions) >= 5:
+                    break
+
+    # ===== 6. 提取HR行动建议 =====
     action_items = []
     in_action = False
     action_skip = ['HR行动建议', '维度', '具体建议', '数据/案例支撑']
@@ -225,15 +178,49 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                             cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                             action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
 
-    # ===== 8. 构建卡片 =====
+    # =========================================================
+    # ===== 7. 提取本周卡片数据（从固定区块精确抓取） =====
+    # =========================================================
+
+    card_mapping = {
+        '关键人才争夺': '关键人才争夺',
+        '组织效能': '组织效能',
+        '人才结构': '人才结构',
+        '竞品动作': '竞品动作',
+    }
+    card_values = {v: '--' for v in card_mapping.values()}
+
+    in_card_section = False
+    for line in lines:
+        if '本周卡片数据' in line:
+            in_card_section = True
+            continue
+        if in_card_section:
+            if line.startswith('##') and '卡片' not in line:
+                in_card_section = False
+                continue
+            for card_key in card_mapping.keys():
+                if line.startswith(f'- {card_key}'):
+                    content = line.replace(f'- {card_key}', '').strip()
+                    if content.startswith('：'):
+                        content = content[1:].strip()
+                    if content.startswith(':'):
+                        content = content[1:].strip()
+                    if content:
+                        card_values[card_key] = content
+                    break
+
     cards = [
-        {"label": "招聘热度", "value": card_values['招聘热度']},
-        {"label": "薪酬变化", "value": card_values['薪酬变化']},
-        {"label": "人才流动", "value": card_values['人才流动']},
-        {"label": "政策动向", "value": card_values['政策动向']},
+        {"label": "关键人才争夺", "value": card_values['关键人才争夺']},
+        {"label": "组织效能", "value": card_values['组织效能']},
+        {"label": "人才结构", "value": card_values['人才结构']},
+        {"label": "竞品动作", "value": card_values['竞品动作']},
     ]
 
-    # ===== 9. 生成 HTML =====
+    # =========================================================
+    # ===== 8. 生成 HTML =====
+    # =========================================================
+
     cards_html = ''
     for card in cards:
         value = card['value']
@@ -370,11 +357,12 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             word-break: break-word;
         }}
         .card-value {{
-            font-size: 26px;
+            font-size: 22px;
             font-weight: 700;
             color: #1a3a5c;
-            line-height: 1.2;
+            line-height: 1.3;
             max-width: 100%;
+            text-align: center;
         }}
         .card-value .up {{ color: #2e7d32; }}
         .card-value .down {{ color: #c62828; }}
