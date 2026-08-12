@@ -12,6 +12,14 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     lines = markdown_text.split('\n')
     
+    # 预处理：去除行首的 > 和空白字符（处理引用块中的内容）
+    cleaned_lines = []
+    for line in lines:
+        # 去除行首的 > 和空格
+        cleaned = re.sub(r'^>\s*', '', line)
+        cleaned_lines.append(cleaned)
+    lines = cleaned_lines
+    
     # ===== 1. 提取标题和日期 =====
     title = "农牧行业人力资源周报"
     report_date = ""
@@ -24,7 +32,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         elif '报告周期' in line or '发布日期' in line:
             report_date = line.strip()
 
-    # 如果没提取到具体日期，用今天的日期
     if not report_date:
         import datetime
         report_date = datetime.datetime.now().strftime("%Y年%m月%d日")
@@ -62,8 +69,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             in_metric_table = True
             table_type = 'core'
             continue
-        if '行业薪酬趋势' in line or '### 行业薪酬趋势' in line:
-            if not in_metric_table:  # 如果核心数据速览已经匹配到，不覆盖
+        if '行业薪酬趋势' in line:
+            if not in_metric_table:
                 in_metric_table = True
                 table_type = 'salary'
             continue
@@ -96,40 +103,21 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         '政策动向': '暂无'
     }
 
-    if table_type == 'core' and len(table_data) >= 5:
-        # 核心数据速览：按行号精准映射
-        # 行1: 行业整体招聘热度
-        if len(table_data[0]) >= 2 and table_data[0][1]:
-            val = table_data[0][1]
-            # 精简格式：提取数值和趋势
-            if '下降' in val or '下跌' in val:
-                num = re.search(r'([\d.]+%?)', val)
-                card_values['招聘热度'] = f"↓ {num.group(1) if num else val}"
-            elif '上升' in val or '上涨' in val:
-                num = re.search(r'([\d.]+%?)', val)
-                card_values['招聘热度'] = f"↑ {num.group(1) if num else val}"
-            else:
-                card_values['招聘热度'] = val
-        # 行3或行4: 薪酬相关
-        if len(table_data) >= 4 and len(table_data[3]) >= 2 and table_data[3][1]:
-            val = table_data[3][1]
-            if '上涨' in val or '上升' in val:
-                num = re.search(r'([\d.]+%?(\s*-\s*[\d.]+%?)?)', val)
-                card_values['薪酬变化'] = f"↑ {num.group(1) if num else val}"
-            elif '下降' in val or '下跌' in val:
-                num = re.search(r'([\d.]+%?)', val)
-                card_values['薪酬变化'] = f"↓ {num.group(1) if num else val}"
-            else:
-                card_values['薪酬变化'] = val
-        # 行5或行6: 离职率
+    if table_type == 'core' and len(table_data) >= 4:
         for row in table_data:
-            if len(row) >= 2 and ('离职率' in row[0] or '流动率' in row[0]):
-                val = row[1]
-                num = re.search(r'([\d.]+%?)', val)
-                card_values['人才流动'] = num.group(1) if num else val
-                break
+            if len(row) >= 2:
+                indicator = row[0]
+                val = row[1] if row[1] else ''
+                if '招聘热度' in indicator or '整体招聘' in indicator:
+                    num = re.search(r'([\d.]+%?)', val)
+                    card_values['招聘热度'] = f"↑ {num.group(1)}" if num and '上升' in val else f"↓ {num.group(1)}" if num and '下降' in val else val
+                elif '薪酬' in indicator or '月薪' in indicator or '兽医' in indicator:
+                    num = re.search(r'([\d,]+-?[\d,]*\s*%?)', val)
+                    card_values['薪酬变化'] = num.group(1) if num else val
+                elif '离职率' in indicator or '流动率' in indicator:
+                    num = re.search(r'([\d.]+%?)', val)
+                    card_values['人才流动'] = num.group(1) if num else val
     elif table_type == 'salary' and len(table_data) >= 4:
-        # 行业薪酬趋势：取前4个岗位
         for i, row in enumerate(table_data[:4]):
             if len(row) >= 2:
                 label = row[0]
@@ -258,7 +246,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(cells) >= 2:
                     first_cell = cells[0]
                     if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
-                        # 清理 Markdown 加粗标记
                         cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                         action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
         if in_action_table and line.startswith('##') and '行动' not in line:
@@ -267,9 +254,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 生成 HTML 模板 =====
     cards_html = ''
     for card in cards:
+        value = card['value']
+        # 检测是否为趋势数据，添加颜色
+        if isinstance(value, str) and value.startswith('↑'):
+            value = f'<span class="up">{value}</span>'
+        elif isinstance(value, str) and value.startswith('↓'):
+            value = f'<span class="down">{value}</span>'
         cards_html += f'''
         <div class="card">
-            <div class="card-value">{card['value']}</div>
+            <div class="card-value">{value}</div>
             <div class="card-label">{card['label']}</div>
         </div>
         '''
@@ -284,7 +277,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         for row in table_data[:10]:
             table_html += '<tr>'
             for cell in row:
-                # 清理加粗标记
                 clean_cell = re.sub(r'\*\*', '', cell)
                 table_html += f'<td>{clean_cell if clean_cell else "--"}</td>'
             table_html += '</tr>'
