@@ -27,7 +27,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if '# 农牧行业人力资源周报' in line:
             title = "农牧行业人力资源周报"
             report_type = 'hr'
-        elif '# 生猪养殖产业链市场周报' in line or '# 农牧行业周报' in line:
+        elif '# 农牧行业周报' in line:
             title = "农牧行业周报"
             report_type = 'agri'
         
@@ -141,247 +141,92 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if len(news_items) >= 5:
             break
 
-    # ===== 5. 提取关键结论 =====
+    # ===== 5. 提取关键结论（只认固定格式：> - ） =====
     conclusions = []
-    summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号', '核心判断']
-    in_summary = False
     for line in lines:
-        matched = False
-        for kw in summary_keywords:
-            if kw in line:
-                matched = True
-                break
-        if matched:
-            in_summary = True
-            clean = line.strip()
-            for kw in summary_keywords:
-                clean = clean.replace(kw, '')
-            clean = clean.strip()
-            if clean.startswith('：'):
-                clean = clean[1:].strip()
-            if clean.startswith(':'):
-                clean = clean[1:].strip()
+        if line.startswith('> - '):
+            clean = line[4:].strip()
             clean = re.sub(r'\*\*', '', clean)
-            if clean and len(clean) > 10 and len(clean) < 300:
-                items = re.split(r'[①②③④⑤⑥⑦⑧⑨⑩]', clean)
-                items = [item.strip() for item in items if item.strip()]
-                if items:
-                    for item in items:
-                        item = re.sub(r'\*\*', '', item)
-                        if item:
-                            conclusions.append('• ' + item[:150])
-                else:
-                    conclusions.append('• ' + clean[:150])
-            continue
-        
-        if in_summary:
-            if line.strip() == '':
-                continue
-            if line.startswith('##') or line.startswith('---'):
-                in_summary = False
-                continue
-            clean = line.strip()
-            if clean.startswith('-'):
-                clean = clean[1:].strip()
-            if clean.startswith('>'):
-                clean = clean[1:].strip()
-            clean = re.sub(r'\*\*', '', clean)
-            # 去掉序号：1. 2. 3. 等
-            clean = re.sub(r'^[\d]+\.\s*', '', clean)
-            # 去掉开头的冒号
-            clean = re.sub(r'^[：:]\s*', '', clean)
-            # 跳过空标题行
-            if re.match(r'^-\s*\*\*[^*]+\*\*[：:]?\s*$', clean):
-                continue
-            if clean and len(clean) > 5 and len(clean) < 250:
+            if clean and len(clean) > 5:
                 conclusions.append('• ' + clean)
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 6. 提取行动建议（支持多种格式） =====
+    # ===== 6. 提取行动建议（只认固定格式：01 | 【触发场景】... | 【行动建议】...） =====
     action_items = []
-    in_action = False
-    in_action_item = False
-    current_title = ""
-    current_desc = ""
-    action_skip = ['行动建议', 'HR行动建议', '维度', '具体建议', '数据/案例支撑']
+    in_action_block = False
     
     for line in lines:
-        # 检测行动建议区块开始
-        if '行动建议' in line and '触发场景' not in line:
-            in_action = True
+        if '行动建议' in line:
+            in_action_block = True
             continue
         
-        if in_action:
-            # 检测区块结束
-            if line.startswith('##') and '行动' not in line and '建议' not in line:
-                in_action = False
-                break
-            
-            # 格式1：01 | 【触发场景：xxx】xxx（之前已支持）
-            if re.match(r'^[0-9]{2}\s*[|｜]\s*', line.strip()):
-                clean = re.sub(r'^[0-9]{2}\s*[|｜]\s*', '', line.strip())
-                if clean and len(clean) > 5:
-                    if '【触发场景' in clean:
-                        parts = clean.split('】', 1)
-                        if len(parts) == 2:
-                            title_part = parts[0].strip() + '】'
-                            desc_part = parts[1].strip()
-                            action_items.append([title_part, desc_part])
-                        else:
-                            action_items.append(clean)
-                    else:
-                        action_items.append(clean)
-                continue
-            
-            # 格式2：01. xxx 或 01、xxx
-            if re.match(r'^[0-9]{2}[\.、]\s*', line.strip()):
-                clean = re.sub(r'^[0-9]{2}[\.、]\s*', '', line.strip())
-                if clean and len(clean) > 5:
-                    action_items.append(clean)
-                continue
-            
-            # 格式3：表格格式
-            if '|' in line and '---' not in line:
-                cells = [c.strip() for c in line.split('|') if c.strip()]
-                if len(cells) >= 2:
-                    header_text = ''.join(cells)
-                    if any(kw in header_text for kw in action_skip):
-                        continue
-                    if len(cells) >= 2:
-                        first_cell = cells[0]
-                        if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
-                            cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
-                            action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
-                continue
-            
-            # 格式4：**01** / 【触发场景】xxx / 【行动建议】xxx
-            if re.match(r'^\*\*[0-9]{2}\*\*', line.strip()):
-                if current_title and current_desc:
-                    action_items.append([current_title, current_desc])
-                current_title = ""
-                current_desc = ""
-                in_action_item = True
-                continue
-            
-            if in_action_item:
-                # 提取触发场景
-                if '【触发场景' in line:
-                    match = re.search(r'【触发场景[：:]\s*(.+?)(?=【|$)', line)
-                    if match:
-                        current_title = "触发场景：" + match.group(1).strip()
-                    continue
-                # 提取行动建议
-                if '【行动建议' in line:
-                    match = re.search(r'【行动建议[：:]\s*(.+)', line)
-                    if match:
-                        current_desc = match.group(1).strip()
-                    continue
-                # 如果一行同时包含触发场景和行动建议
-                if '【触发场景' in line and '【行动建议' in line:
-                    # 提取触发场景
-                    scene_match = re.search(r'【触发场景[：:]\s*(.+?)【行动建议', line)
-                    if scene_match:
-                        current_title = "触发场景：" + scene_match.group(1).strip()
-                    # 提取行动建议
-                    adv_match = re.search(r'【行动建议[：:]\s*(.+)', line)
-                    if adv_match:
-                        current_desc = adv_match.group(1).strip()
-                    if current_title and current_desc:
-                        action_items.append([current_title, current_desc])
-                        current_title = ""
-                        current_desc = ""
-                        in_action_item = False
-                    continue
-    
-    # 处理最后一条
-    if current_title and current_desc:
-        action_items.append([current_title, current_desc])
+        if not in_action_block:
+            continue
+        
+        if line.startswith('##') and '行动' not in line and '建议' not in line:
+            in_action_block = False
+            break
+        
+        # 匹配固定格式：01 | 【触发场景】xxx | 【行动建议】xxx
+        if re.match(r'^[0-9]{2}\s*\|\s*【触发场景】', line):
+            parts = line.split('|')
+            if len(parts) >= 3:
+                title_part = parts[1].strip() if len(parts) > 1 else ""
+                desc_part = parts[2].strip() if len(parts) > 2 else ""
+                if title_part and desc_part:
+                    action_items.append([title_part, desc_part])
+            continue
 
-    # ===== 7. 提取卡片数据 =====
-    if report_type == 'agri':
-        card_mapping = {
-            '生猪均价': '生猪均价',
-            '猪粮比': '猪粮比',
-            '自繁自养利润': '自繁自养利润',
-            '饲料成本': '饲料成本',
-        }
-    else:
-        card_mapping = {
-            '关键人才争夺': '关键人才争夺',
-            '组织效能': '组织效能',
-            '人才结构': '人才结构',
-            '竞品动作': '竞品动作',
-        }
-    
-    card_values = {v: '--' for v in card_mapping.values()}
-
+    # ===== 7. 提取卡片数据（只认固定格式：- 卡片名：数值 | 变化描述） =====
+    card_data = []
     in_card_section = False
+    
     for line in lines:
-        # 支持两种标题：本周卡片数据 或 数据卡片
-        if '本周卡片数据' in line or '数据卡片' in line:
+        if '## 本周卡片数据' in line:
             in_card_section = True
             continue
         if in_card_section:
-            if line.startswith('##') and '卡片' not in line:
+            if line.startswith('##') and '本周卡片数据' not in line:
                 in_card_section = False
                 continue
-            for card_key in card_mapping.keys():
-                if line.startswith(f'- {card_key}'):
-                    content = line.replace(f'- {card_key}', '').strip()
-                    if content.startswith('：'):
-                        content = content[1:].strip()
-                    if content.startswith(':'):
-                        content = content[1:].strip()
-                    if content:
-                        card_values[card_mapping[card_key]] = content
-                    break
-
-    cards_raw = [
-        {"label": list(card_mapping.keys())[0], "value": card_values[list(card_mapping.values())[0]]},
-        {"label": list(card_mapping.keys())[1], "value": card_values[list(card_mapping.values())[1]]},
-        {"label": list(card_mapping.keys())[2], "value": card_values[list(card_mapping.values())[2]]},
-        {"label": list(card_mapping.keys())[3], "value": card_values[list(card_mapping.values())[3]]},
-    ]
-
-    # =========================================================
-    # ===== 8. 统一卡片三行布局 =====
-    # =========================================================
-
-    cards = []
-    for card in cards_raw:
-        label = card['label']
-        value = card['value']
-        
-        # 第一行：标签名
-        first_line = label
-        
-        # 第二行和第三行从 value 中解析
-        if isinstance(value, str) and '|' in value:
-            parts = value.split('|', 1)
-            second_line = parts[0].strip()
-            third_line = parts[1].strip()
-        else:
-            second_line = value if value else '--'
-            third_line = ''
-        
-        cards.append({
-            'first_line': first_line,
-            'second_line': second_line,
-            'third_line': third_line
-        })
+            if line.startswith('- ') and ' | ' in line:
+                content = line[2:].strip()
+                if '：' in content:
+                    name = content.split('：')[0].strip()
+                    rest = content.split('：')[1].strip() if len(content.split('：')) > 1 else ""
+                    if ' | ' in rest:
+                        value = rest.split(' | ')[0].strip()
+                        change = rest.split(' | ')[1].strip() if len(rest.split(' | ')) > 1 else ""
+                        card_data.append({
+                            'name': name,
+                            'value': value,
+                            'change': change
+                        })
 
     cards_html = ''
-    for card in cards:
-        cards_html += f'''
-        <div class="card">
-            <div class="card-name">{card['first_line']}</div>
-            <div class="card-value">{card['second_line']}</div>
-            <div class="card-change">{card['third_line']}</div>
-        </div>
-        '''
+    if card_data:
+        for card in card_data[:4]:
+            cards_html += f'''
+            <div class="card">
+                <div class="card-name">{card['name']}</div>
+                <div class="card-value">{card['value']}</div>
+                <div class="card-change">{card['change']}</div>
+            </div>
+            '''
+    else:
+        # 备用：从 table_data 取前4行
+        for row in table_data[:4]:
+            if len(row) >= 2:
+                cards_html += f'''
+                <div class="card">
+                    <div class="card-name">指标</div>
+                    <div class="card-value">{row[1]}</div>
+                    <div class="card-change">--</div>
+                </div>
+                '''
 
-    # ===== 9. 生成表格 =====
+    # ===== 8. 生成表格 =====
     table_html = ''
     if table_data:
         table_html = '<table><thead><tr><th>指标</th><th>本期数据</th><th>趋势</th></tr></thead><tbody>'
@@ -395,7 +240,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         table_html = '<p style="color:#999;text-align:center;">暂无数据</p>'
 
-    # ===== 10. 生成结论 =====
+    # ===== 9. 生成结论 =====
     conclusions_html = ''
     if conclusions:
         for c in conclusions[:5]:
@@ -403,7 +248,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         conclusions_html = '<li>暂无关键结论</li>'
 
-    # ===== 11. 生成要闻 =====
+    # ===== 10. 生成要闻 =====
     news_html = ''
     if news_items:
         for item in news_items[:6]:
@@ -411,7 +256,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         news_html = '<li>暂无要闻</li>'
 
-    # ===== 12. 生成竞品表格 =====
+    # ===== 11. 生成竞品表格 =====
     competitor_html = ''
     if competitor_data:
         competitor_html = f'<table><thead><tr>'
@@ -427,7 +272,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
-    # ===== 13. 生成行动建议HTML =====
+    # ===== 12. 生成行动建议HTML =====
     action_html = ''
     if action_items:
         for item in action_items[:4]:
@@ -440,36 +285,10 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     <div class="action-desc">{desc_part}</div>
                 </div>
                 '''
-            elif isinstance(item, str):
-                if '【触发场景' in item:
-                    parts = item.split('】', 1)
-                    if len(parts) == 2:
-                        title_part = parts[0].strip() + '】'
-                        desc_part = parts[1].strip()
-                        action_html += f'''
-                        <div class="action-item">
-                            <div class="action-title">{title_part}</div>
-                            <div class="action-desc">{desc_part}</div>
-                        </div>
-                        '''
-                    else:
-                        action_html += f'''
-                        <div class="action-item">
-                            <div class="action-title">{item[:30]}</div>
-                            <div class="action-desc">{item[30:] if len(item) > 30 else ""}</div>
-                        </div>
-                        '''
-                else:
-                    action_html += f'''
-                    <div class="action-item">
-                        <div class="action-title">{item[:20]}</div>
-                        <div class="action-desc">{item[20:] if len(item) > 20 else ""}</div>
-                    </div>
-                    '''
     else:
         action_html = '<div class="action-item">暂无行动建议</div>'
 
-    # ===== 14. 完整HTML模板 =====
+    # ===== 13. 完整HTML模板 =====
     html_content = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -556,17 +375,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             color: #555;
             margin-top: 2px;
         }}
-        .card-value .up {{ color: #2e7d32; }}
-        .card-value .down {{ color: #c62828; }}
-        .card-sub {{
-            font-size: 15px;
-            color: #555;
-            margin-top: 2px;
-            font-weight: 500;
-            max-width: 100%;
-            text-align: center;
-        }}
-        .card-label {{ font-size: 13px; color: #888; margin-top: 6px; }}
         .body-content {{ padding: 20px 40px 30px 40px; }}
         .section {{ margin-bottom: 24px; }}
         .section-title {{
