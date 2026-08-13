@@ -188,7 +188,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             clean = re.sub(r'\*\*', '', clean)
             # 去掉序号：1. 2. 3. 等
             clean = re.sub(r'^[\d]+\.\s*', '', clean)
-            # 去掉开头的冒号（修复问题2）
+            # 去掉开头的冒号
             clean = re.sub(r'^[：:]\s*', '', clean)
             # 跳过空标题行
             if re.match(r'^-\s*\*\*[^*]+\*\*[：:]?\s*$', clean):
@@ -201,18 +201,24 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 6. 提取行动建议（支持多种格式） =====
     action_items = []
     in_action = False
+    in_action_item = False
+    current_title = ""
+    current_desc = ""
     action_skip = ['行动建议', 'HR行动建议', '维度', '具体建议', '数据/案例支撑']
     
     for line in lines:
+        # 检测行动建议区块开始
         if '行动建议' in line and '触发场景' not in line:
             in_action = True
             continue
+        
         if in_action:
+            # 检测区块结束
             if line.startswith('##') and '行动' not in line and '建议' not in line:
                 in_action = False
-                continue
+                break
             
-            # 格式1：01 | 【触发场景：xxx】xxx
+            # 格式1：01 | 【触发场景：xxx】xxx（之前已支持）
             if re.match(r'^[0-9]{2}\s*[|｜]\s*', line.strip()):
                 clean = re.sub(r'^[0-9]{2}\s*[|｜]\s*', '', line.strip())
                 if clean and len(clean) > 5:
@@ -247,6 +253,50 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                         if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
                             cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                             action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
+                continue
+            
+            # 格式4：**01** / 【触发场景】xxx / 【行动建议】xxx
+            if re.match(r'^\*\*[0-9]{2}\*\*', line.strip()):
+                if current_title and current_desc:
+                    action_items.append([current_title, current_desc])
+                current_title = ""
+                current_desc = ""
+                in_action_item = True
+                continue
+            
+            if in_action_item:
+                # 提取触发场景
+                if '【触发场景' in line:
+                    match = re.search(r'【触发场景[：:]\s*(.+?)(?=【|$)', line)
+                    if match:
+                        current_title = "触发场景：" + match.group(1).strip()
+                    continue
+                # 提取行动建议
+                if '【行动建议' in line:
+                    match = re.search(r'【行动建议[：:]\s*(.+)', line)
+                    if match:
+                        current_desc = match.group(1).strip()
+                    continue
+                # 如果一行同时包含触发场景和行动建议
+                if '【触发场景' in line and '【行动建议' in line:
+                    # 提取触发场景
+                    scene_match = re.search(r'【触发场景[：:]\s*(.+?)【行动建议', line)
+                    if scene_match:
+                        current_title = "触发场景：" + scene_match.group(1).strip()
+                    # 提取行动建议
+                    adv_match = re.search(r'【行动建议[：:]\s*(.+)', line)
+                    if adv_match:
+                        current_desc = adv_match.group(1).strip()
+                    if current_title and current_desc:
+                        action_items.append([current_title, current_desc])
+                        current_title = ""
+                        current_desc = ""
+                        in_action_item = False
+                    continue
+    
+    # 处理最后一条
+    if current_title and current_desc:
+        action_items.append([current_title, current_desc])
 
     # ===== 7. 提取卡片数据 =====
     if report_type == 'agri':
@@ -268,6 +318,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     in_card_section = False
     for line in lines:
+        # 支持两种标题：本周卡片数据 或 数据卡片
         if '本周卡片数据' in line or '数据卡片' in line:
             in_card_section = True
             continue
