@@ -103,7 +103,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     while len(cells) < target_len:
                         cells.append('—')
                     cells = [c.replace('**', '') for c in cells]
-                    # 对最新简讯列提取纯文本标题
+                    # 对最新简讯列提取纯文本标题（去掉 Markdown 链接）
                     if len(cells) > 0:
                         last_idx = len(cells) - 1
                         if '[' in cells[last_idx] and '](' in cells[last_idx]:
@@ -200,7 +200,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if len(clean) > 10 and not clean.startswith('|') and '【来源' not in clean and '```' not in clean:
                 conclusions.append('• ' + clean[:150])
 
-    # ===== 6. 提取行动建议（表格格式，支持两种表头） =====
+    # ===== 6. 提取行动建议（表格格式） =====
     action_items = []
     in_action_section = False
     
@@ -220,15 +220,12 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if not clean:
             continue
         
-        # 表格格式
         if '|' in clean and '---' not in clean:
             cells = [c.strip() for c in clean.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
-                # 跳过表头（支持两种格式）
-                if any(kw in header_text for kw in ['维度', '具体建议', '数据/案例支撑', '序号', '触发场景', '行动建议']):
+                if any(kw in header_text for kw in ['序号', '触发场景', '行动建议', '维度', '具体建议', '数据/案例支撑']):
                     continue
-                # 数据行
                 if len(cells) >= 3:
                     action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
 
@@ -254,12 +251,17 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     if ' | ' in rest:
                         value = rest.split(' | ')[0].strip()
                         change = rest.split(' | ')[1].strip() if len(rest.split(' | ')) > 1 else ""
+                        # 清理 Markdown 加粗符号
+                        value = value.strip('*')
+                        change = change.strip('*')
                         card_data.append({
                             'name': name,
                             'value': value,
                             'change': change
                         })
                     else:
+                        # 如果没有 | 分隔符，整个 rest 作为 value
+                        rest = rest.strip('*')
                         card_data.append({
                             'name': name,
                             'value': rest,
@@ -278,15 +280,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             </div>
             '''
     else:
-        for row in table_data[:4]:
-            if len(row) >= 2:
-                cards_html += f'''
-                <div class="card">
-                    <div class="card-name">{row[0] if row[0] else "指标"}</div>
-                    <div class="card-value">{row[1] if row[1] else "--"}</div>
-                    <div class="card-change">--</div>
-                </div>
-                '''
+        # 解析失败时显示占位符，不调用数据速览表的数据
+        for i in range(4):
+            cards_html += f'''
+            <div class="card">
+                <div class="card-name">--</div>
+                <div class="card-value">--</div>
+                <div class="card-change">--</div>
+            </div>
+            '''
 
     # ===== 9. 生成表格 =====
     table_html = ''
