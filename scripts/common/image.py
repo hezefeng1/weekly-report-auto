@@ -186,15 +186,19 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if clean.startswith('>'):
                 clean = clean[1:].strip()
             clean = re.sub(r'\*\*', '', clean)
-            # 【修复1】跳过标题行（如 "- **本期**："）
+            # 去掉序号：1. 2. 3. 等
+            clean = re.sub(r'^[\d]+\.\s*', '', clean)
+            # 去掉开头的冒号（修复问题2）
+            clean = re.sub(r'^[：:]\s*', '', clean)
+            # 跳过空标题行
             if re.match(r'^-\s*\*\*[^*]+\*\*[：:]?\s*$', clean):
                 continue
-            if clean and len(clean) > 10 and len(clean) < 250:
+            if clean and len(clean) > 5 and len(clean) < 250:
                 conclusions.append('• ' + clean)
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 6. 提取行动建议 =====
+    # ===== 6. 提取行动建议（支持多种格式） =====
     action_items = []
     in_action = False
     action_skip = ['行动建议', 'HR行动建议', '维度', '具体建议', '数据/案例支撑']
@@ -290,7 +294,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     ]
 
     # =========================================================
-    # ===== 8. 卡片渲染（根据类型决定布局） =====
+    # ===== 8. 统一卡片三行布局 =====
     # =========================================================
 
     cards = []
@@ -298,76 +302,33 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         label = card['label']
         value = card['value']
         
-        if report_type == 'agri':
-            # 【修复3】农牧周报卡片三行布局：标签 → 数值 → 变化
-            first_line = label
-            second_line = '--'
-            third_line = ''
-            
-            if isinstance(value, str) and '|' in value:
-                parts = value.split('|', 1)
-                second_line = parts[0].strip()
-                third_line = parts[1].strip()
-            else:
-                second_line = value
-            
-            cards.append({
-                'label': label,
-                'first_line': first_line,
-                'second_line': second_line,
-                'third_line': third_line,
-                'layout': 'three_row'
-            })
+        # 第一行：标签名
+        first_line = label
+        
+        # 第二行和第三行从 value 中解析
+        if isinstance(value, str) and '|' in value:
+            parts = value.split('|', 1)
+            second_line = parts[0].strip()
+            third_line = parts[1].strip()
         else:
-            # 人力资源周报卡片两行布局
-            first_line = value
-            second_line = None
-            
-            if isinstance(value, str) and '|' in value:
-                parts = value.split('|', 1)
-                first_line = parts[0].strip()
-                second_line = parts[1].strip()
-                if first_line and first_line[0] in ['↑', '↓']:
-                    first_line = f'<span class="up">{first_line[0]}</span>{first_line[1:]}'
-            else:
-                first_line = value
-            
-            cards.append({
-                'label': label,
-                'first_line': first_line,
-                'second_line': second_line,
-                'third_line': '',
-                'layout': 'two_row'
-            })
+            second_line = value if value else '--'
+            third_line = ''
+        
+        cards.append({
+            'first_line': first_line,
+            'second_line': second_line,
+            'third_line': third_line
+        })
 
     cards_html = ''
     for card in cards:
-        if card['layout'] == 'three_row':
-            # 农牧周报三行卡片
-            cards_html += f'''
-            <div class="card">
-                <div class="card-name">{card['label']}</div>
-                <div class="card-value">{card['second_line']}</div>
-                <div class="card-change">{card['third_line']}</div>
-            </div>
-            '''
-        else:
-            # 人力资源周报两行卡片
-            if card['second_line']:
-                cards_html += f'''
-                <div class="card">
-                    <div class="card-value">{card['first_line']}</div>
-                    <div class="card-sub">{card['second_line']}</div>
-                    <div class="card-label">{card['label']}</div>
-                </div>
-                '''
-            else:
-                cards_html += f'''
-                <div class="card">
-                    <div class="card-value">{card['first_line']}</div>
-                    <div class="card-label">{card['label']}</div>
-                </div>
-                '''
+        cards_html += f'''
+        <div class="card">
+            <div class="card-name">{card['first_line']}</div>
+            <div class="card-value">{card['second_line']}</div>
+            <div class="card-change">{card['third_line']}</div>
+        </div>
+        '''
 
     # ===== 9. 生成表格 =====
     table_html = ''
