@@ -219,7 +219,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             continue
         
         # 格式1：01 | 【触发场景】... | 【行动建议】...
-        if re.match(r'^[0-9]{2}\s*\|', clean) and '【触发场景】' in clean and '【行动建议】' in clean:
+        # 使用 re.search 而不是 re.match，兼容行首可能有不可见字符的情况
+        if re.search(r'[0-9]{2}\s*\|', clean) and '【触发场景】' in clean and '【行动建议】' in clean:
             scene_match = re.search(r'【触发场景[：:]\s*([^【]+?)(?=【行动建议]|$)', clean)
             advice_match = re.search(r'【行动建议[：:]\s*(.+?)(?=$)', clean)
             if scene_match and advice_match:
@@ -227,7 +228,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             continue
         
         # 格式2：只有序号开头的行（但内容在同一行）
-        if re.match(r'^[0-9]{2}\s*\|', clean):
+        if re.search(r'[0-9]{2}\s*\|', clean):
             # 尝试提取触发场景
             if '【触发场景】' in clean:
                 scene_match = re.search(r'【触发场景[：:]\s*([^【]+?)(?=【|$)', clean)
@@ -248,18 +249,16 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
             continue
 
-    # ===== 7. 提取卡片数据（放宽匹配条件） =====
+    # ===== 7. 提取卡片数据 =====
     card_data = []
     in_card_section = False
     
     for line in lines:
-        # 匹配任何包含"卡片"的二级标题，不限于固定名称
         if '##' in line and '卡片' in line:
             in_card_section = True
             continue
         
         if in_card_section:
-            # 遇到下一个二级标题（不含"卡片"）时退出
             if line.startswith('##') and '卡片' not in line:
                 in_card_section = False
                 continue
@@ -278,7 +277,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                             'change': change
                         })
                     else:
-                        # 没有 | 分隔符，直接取 rest 作为 value
                         card_data.append({
                             'name': name,
                             'value': rest,
@@ -297,7 +295,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             </div>
             '''
     else:
-        # 兜底：从 table_data 取数据
         for row in table_data[:4]:
             if len(row) >= 2:
                 cards_html += f'''
@@ -308,7 +305,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 </div>
                 '''
 
-    # ===== 9-14. 生成表格、结论、要闻、竞品、行动建议HTML =====
+    # ===== 9. 生成表格 =====
     table_html = ''
     if table_data:
         table_html = '<table><thead><tr><th>指标</th><th>本期数据</th><th>趋势</th></tr></thead><tbody>'
@@ -322,6 +319,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         table_html = '<p style="color:#999;text-align:center;">暂无数据</p>'
 
+    # ===== 10. 生成结论 =====
     conclusions_html = ''
     if conclusions:
         for c in conclusions[:5]:
@@ -329,6 +327,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         conclusions_html = '<li>暂无关键结论</li>'
 
+    # ===== 11. 生成要闻 =====
     news_html = ''
     if news_items:
         for item in news_items[:6]:
@@ -336,6 +335,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         news_html = '<li>暂无要闻</li>'
 
+    # ===== 12. 生成竞品表格 =====
     competitor_html = ''
     if competitor_data:
         competitor_html = f'<table><thead><tr>'
@@ -351,6 +351,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
+    # ===== 13. 生成行动建议HTML =====
     action_html = ''
     if action_items:
         for item in action_items[:4]:
@@ -373,6 +374,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         action_html = '<div class="action-item">暂无行动建议</div>'
 
+    # ===== 14. 完整HTML模板 =====
     html_content = f'''<!DOCTYPE html>
 <html>
 <head>
