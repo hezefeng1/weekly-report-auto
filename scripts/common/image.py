@@ -5,8 +5,8 @@ from playwright.sync_api import sync_playwright
 
 def markdown_to_image(markdown_text, output_path="report.png"):
     """
-    将人力资源周报 Markdown 内容渲染为 PNG 信息图
-    覆盖所有已知格式变体，不依赖固定章节号或行号
+    通用 Markdown 渲染为 PNG 图片
+    自动识别周报类型（人力资源 / 农牧市场），适配不同的卡片和表格结构
     """
     print("=== 开始渲染图片 ===")
 
@@ -19,25 +19,34 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         lines.append(cleaned)
     
     # ===== 1. 提取标题和日期 =====
-    title = "农牧行业人力资源周报"
+    title = "农牧行业周报"
     report_date = ""
     for line in lines[:15]:
         if '# 农牧行业人力资源周报' in line:
-            date_match = re.search(r'(\d{4}年\d{2}月\d{2}日)', line)
-            if date_match:
-                report_date = date_match.group(1)
-            title = line.replace('#', '').strip()
-        elif '报告周期' in line or '发布日期' in line:
-            report_date = line.strip()
-
+            title = "农牧行业人力资源周报"
+            report_type = 'hr'
+        elif '# 生猪养殖产业链市场周报' in line:
+            title = "生猪养殖产业链市场周报"
+            report_type = 'agri'
+        elif '# 农牧行业周报' in line:
+            title = "农牧行业周报"
+            report_type = 'agri'
+        
+        date_match = re.search(r'(\d{4}年\d{2}月\d{2}日)', line)
+        if date_match:
+            report_date = date_match.group(1)
+    
     if not report_date:
         import datetime
         report_date = datetime.datetime.now().strftime("%Y年%m月%d日")
+    
+    if 'report_type' not in dir():
+        report_type = 'hr'  # 默认人力资源
 
     # ===== 2. 提取核心数据速览表 =====
     table_data = []
     in_table = False
-    table_end_markers = ['人力资源要闻', '竞品HR动态', '行动建议', '专项关注']
+    table_end_markers = ['人力资源要闻', '行业要闻', '竞品动态', '行动建议', '专项关注']
     
     for i, line in enumerate(lines):
         if '核心数据速览' in line:
@@ -60,7 +69,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     if is_header:
                         continue
                 has_data = any(re.search(r'[\d,]+\.?\d*', c) for c in cells[:2])
-                has_indicator = any(kw in cells[0] for kw in ['招聘', '薪酬', '流动', '政策', '兽医', '育种', '养殖'])
+                has_indicator = any(kw in cells[0] for kw in ['招聘', '薪酬', '流动', '政策', '兽医', '育种', '养殖', '生猪', '猪粮', '饲料'])
                 if has_data or has_indicator:
                     while len(cells) < 3:
                         cells.append('')
@@ -70,9 +79,18 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 3. 提取竞品对比表 =====
     competitor_data = []
     in_competitor = False
+    competitor_format = 'hr'  # 默认人力资源格式
+
+    # 根据周报类型确定竞品表头和列数
+    if report_type == 'agri':
+        competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新简讯']
+        company_names = ['牧原股份', '温氏股份', '海大集团', '正大集团', '双胞胎集团']
+    else:
+        competitor_headers = ['企业', '招聘策略', '人才培养', '薪酬激励', '组织/人效', '最新动态']
+        company_names = ['牧原股份', '温氏股份', '海大集团', '双胞胎集团', '正大集团']
 
     for line in lines:
-        if '竞品HR动态' in line or '竞品对比' in line or '行业竞品HR动态' in line:
+        if '竞品动态' in line or '竞品HR动态' in line or '行业竞品HR动态' in line:
             in_competitor = True
             continue
         if in_competitor:
@@ -84,26 +102,28 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(cells) < 4:
                     continue
                 header_text = ''.join(cells)
-                # 检测表头：企业 + 招聘策略
-                if ('企业' in header_text and '招聘策略' in header_text):
+                # 检测表头
+                if '企业' in header_text:
                     continue
-                # 检测数据行：企业名在第一列
+                # 检测数据行
                 first_cell = cells[0].replace('**', '').strip()
-                if any(kw in first_cell for kw in ['牧原', '温氏', '海大', '双胞胎', '正大']):
-                    while len(cells) < 6:
+                if any(kw in first_cell for kw in company_names):
+                    target_len = len(competitor_headers)
+                    while len(cells) < target_len:
                         cells.append('—')
                     cells = [c.replace('**', '') for c in cells]
-                    competitor_data.append(cells[:6])
+                    competitor_data.append(cells[:target_len])
 
-    # ===== 4. 提取人力资源要闻 =====
+    # ===== 4. 提取要闻 =====
     news_items = []
     in_news = False
+    news_keywords = ['人力资源要闻', '行业要闻']
     for line in lines:
-        if '人力资源要闻' in line:
+        if any(kw in line for kw in news_keywords):
             in_news = True
             continue
         if in_news:
-            if line.startswith('##') and '要闻' not in line and '人力资源' not in line:
+            if line.startswith('##') and '要闻' not in line and '人力资源' not in line and '行业' not in line:
                 in_news = False
                 continue
             if '[' in line and '](' in line and '|' in line:
@@ -131,7 +151,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     # ===== 5. 提取关键结论 =====
     conclusions = []
-    summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号']
+    summary_keywords = ['本期摘要', '本期核心摘要', '本周关键结论', '关键结论', '本期关键结论', '本期关键信号', '核心判断']
     in_summary = False
     for line in lines:
         matched = False
@@ -179,12 +199,12 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 6. 提取HR行动建议 =====
+    # ===== 6. 提取行动建议 =====
     action_items = []
     in_action = False
-    action_skip = ['HR行动建议', '维度', '具体建议', '数据/案例支撑']
+    action_skip = ['行动建议', 'HR行动建议', '维度', '具体建议', '数据/案例支撑', '触发场景']
     for line in lines:
-        if '行动建议' in line or 'HR行动建议' in line:
+        if '行动建议' in line:
             in_action = True
             continue
         if in_action:
@@ -202,17 +222,32 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                         if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
                             cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                             action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
+            # 支持编号格式（01、02、03、04）
+            if re.match(r'^[0-9]{2}\.', line.strip()):
+                clean = re.sub(r'^\d{2}\.\s*', '', line.strip())
+                if clean and '【' not in clean and len(clean) < 80:
+                    action_items.append(clean)
 
     # =========================================================
     # ===== 7. 提取本周卡片数据（从固定区块精确抓取） =====
     # =========================================================
 
-    card_mapping = {
-        '关键人才争夺': '关键人才争夺',
-        '组织效能': '组织效能',
-        '人才结构': '人才结构',
-        '竞品动作': '竞品动作',
-    }
+    # 根据周报类型设置卡片映射
+    if report_type == 'agri':
+        card_mapping = {
+            '生猪均价': '生猪均价',
+            '猪粮比': '猪粮比',
+            '自繁自养利润': '自繁自养利润',
+            '饲料成本': '饲料成本',
+        }
+    else:
+        card_mapping = {
+            '关键人才争夺': '关键人才争夺',
+            '组织效能': '组织效能',
+            '人才结构': '人才结构',
+            '竞品动作': '竞品动作',
+        }
+    
     card_values = {v: '--' for v in card_mapping.values()}
 
     in_card_section = False
@@ -232,14 +267,14 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     if content.startswith(':'):
                         content = content[1:].strip()
                     if content:
-                        card_values[card_key] = content
+                        card_values[card_mapping[card_key]] = content
                     break
 
     cards_raw = [
-        {"label": "关键人才争夺", "value": card_values['关键人才争夺']},
-        {"label": "组织效能", "value": card_values['组织效能']},
-        {"label": "人才结构", "value": card_values['人才结构']},
-        {"label": "竞品动作", "value": card_values['竞品动作']},
+        {"label": list(card_mapping.keys())[0], "value": card_values[list(card_mapping.values())[0]]},
+        {"label": list(card_mapping.keys())[1], "value": card_values[list(card_mapping.values())[1]]},
+        {"label": list(card_mapping.keys())[2], "value": card_values[list(card_mapping.values())[2]]},
+        {"label": list(card_mapping.keys())[3], "value": card_values[list(card_mapping.values())[3]]},
     ]
 
     # =========================================================
@@ -313,9 +348,13 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         news_html = '<li>暂无要闻</li>'
 
+    # ===== 竞品HTML =====
     competitor_html = ''
     if competitor_data:
-        competitor_html = '<table><thead><tr><th>企业</th><th>招聘策略</th><th>人才培养</th><th>薪酬激励</th><th>组织/人效</th><th>最新动态</th></tr></thead><tbody>'
+        competitor_html = f'<table><thead><tr>'
+        for h in competitor_headers:
+            competitor_html += f'<th>{h}</th>'
+        competitor_html += '</tr></thead><tbody>'
         for row in competitor_data[:5]:
             competitor_html += '<tr>'
             for cell in row:
@@ -325,16 +364,24 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
+    # ===== 行动建议HTML =====
     action_html = ''
     if action_items:
         for row in action_items[:4]:
-            if len(row) >= 2:
+            if isinstance(row, list) and len(row) >= 2:
                 title_part = row[0]
                 desc_part = row[1] if len(row) > 1 else ""
                 action_html += f'''
                 <div class="action-item">
                     <div class="action-title">{title_part}</div>
                     <div class="action-desc">{desc_part}</div>
+                </div>
+                '''
+            elif isinstance(row, str):
+                action_html += f'''
+                <div class="action-item">
+                    <div class="action-title">{row[:20]}</div>
+                    <div class="action-desc">{row[20:] if len(row) > 20 else ""}</div>
                 </div>
                 '''
     else:
@@ -496,8 +543,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         <div class="section"><div class="section-title">📊 数据速览</div>{table_html}</div>
         <div class="section"><div class="section-title">🎯 关键结论</div><ul class="conclusion-list">{conclusions_html}</ul></div>
         <div class="section"><div class="section-title">📰 要闻精选</div><ul class="news-list">{news_html}</ul></div>
-        <div class="section"><div class="section-title">📋 竞品HR策略对比</div>{competitor_html}</div>
-        <div class="section"><div class="section-title">📌 HR 行动建议</div><div class="action-grid">{action_html}</div></div>
+        <div class="section"><div class="section-title">📋 竞品动态对比</div>{competitor_html}</div>
+        <div class="section"><div class="section-title">📌 行动建议</div><div class="action-grid">{action_html}</div></div>
     </div>
 
     <div class="footer">数据来源：公开权威渠道 · 仅供内部参考 · 生成时间：{report_date}</div>
