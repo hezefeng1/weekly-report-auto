@@ -1,0 +1,33 @@
+name: Weekly Agri Report
+
+on:
+  schedule:
+    - cron: '0 10 * * 1'   # 每周一上午10:00（北京时间）运行，比人力周报晚1小时
+  workflow_dispatch:        # 允许手动触发
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          sudo apt-get update
+          sudo apt-get install -y fonts-wqy-microhei fonts-noto-cjk
+
+      - name: Run weekly agri report
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_AGRI: ${{ secrets.RECEIVE_OPEN_ID_AGRI }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/weekly_agri.py
