@@ -21,6 +21,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 1. 提取标题和日期 =====
     title = "农牧行业周报"
     report_date = ""
+    report_type = 'hr'  # 默认人力资源
+    
     for line in lines[:15]:
         if '# 农牧行业人力资源周报' in line:
             title = "农牧行业人力资源周报"
@@ -39,9 +41,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     if not report_date:
         import datetime
         report_date = datetime.datetime.now().strftime("%Y年%m月%d日")
-    
-    if 'report_type' not in dir():
-        report_type = 'hr'  # 默认人力资源
 
     # ===== 2. 提取核心数据速览表 =====
     table_data = []
@@ -79,9 +78,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 3. 提取竞品对比表 =====
     competitor_data = []
     in_competitor = False
-    competitor_format = 'hr'  # 默认人力资源格式
 
-    # 根据周报类型确定竞品表头和列数
+    # 根据周报类型确定竞品表头
     if report_type == 'agri':
         competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新简讯']
         company_names = ['牧原股份', '温氏股份', '海大集团', '正大集团', '双胞胎集团']
@@ -171,6 +169,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 clean = clean[1:].strip()
             clean = re.sub(r'\*\*', '', clean)
             if clean and len(clean) > 10 and len(clean) < 300:
+                # 处理编号列表
                 items = re.split(r'[①②③④⑤⑥⑦⑧⑨⑩]', clean)
                 items = [item.strip() for item in items if item.strip()]
                 if items:
@@ -199,18 +198,44 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 6. 提取行动建议 =====
+    # ===== 6. 提取行动建议（支持多种格式） =====
     action_items = []
     in_action = False
-    action_skip = ['行动建议', 'HR行动建议', '维度', '具体建议', '数据/案例支撑', '触发场景']
+    action_skip = ['行动建议', 'HR行动建议', '维度', '具体建议', '数据/案例支撑']
+    
     for line in lines:
-        if '行动建议' in line:
+        if '行动建议' in line and '触发场景' not in line:
             in_action = True
             continue
         if in_action:
             if line.startswith('##') and '行动' not in line and '建议' not in line:
                 in_action = False
                 continue
+            
+            # 格式1：01 | 【触发场景：xxx】xxx
+            if re.match(r'^[0-9]{2}\s*[|｜]\s*', line.strip()):
+                clean = re.sub(r'^[0-9]{2}\s*[|｜]\s*', '', line.strip())
+                if clean and len(clean) > 5:
+                    if '【触发场景' in clean:
+                        parts = clean.split('】', 1)
+                        if len(parts) == 2:
+                            title_part = parts[0].strip() + '】'
+                            desc_part = parts[1].strip()
+                            action_items.append([title_part, desc_part])
+                        else:
+                            action_items.append(clean)
+                    else:
+                        action_items.append(clean)
+                continue
+            
+            # 格式2：01. xxx 或 01、xxx
+            if re.match(r'^[0-9]{2}[\.、]\s*', line.strip()):
+                clean = re.sub(r'^[0-9]{2}[\.、]\s*', '', line.strip())
+                if clean and len(clean) > 5:
+                    action_items.append(clean)
+                continue
+            
+            # 格式3：表格格式
             if '|' in line and '---' not in line:
                 cells = [c.strip() for c in line.split('|') if c.strip()]
                 if len(cells) >= 2:
@@ -222,14 +247,9 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                         if first_cell and len(first_cell) > 2 and not re.match(r'^[\d]+$', first_cell):
                             cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                             action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
-            # 支持编号格式（01、02、03、04）
-            if re.match(r'^[0-9]{2}\.', line.strip()):
-                clean = re.sub(r'^\d{2}\.\s*', '', line.strip())
-                if clean and '【' not in clean and len(clean) < 80:
-                    action_items.append(clean)
 
     # =========================================================
-    # ===== 7. 提取本周卡片数据（从固定区块精确抓取） =====
+    # ===== 7. 提取卡片数据（支持两种标题） =====
     # =========================================================
 
     # 根据周报类型设置卡片映射
@@ -252,7 +272,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     in_card_section = False
     for line in lines:
-        if '本周卡片数据' in line:
+        # 支持两种标题：本周卡片数据 或 数据卡片
+        if '本周卡片数据' in line or '数据卡片' in line:
             in_card_section = True
             continue
         if in_card_section:
@@ -367,23 +388,44 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 行动建议HTML =====
     action_html = ''
     if action_items:
-        for row in action_items[:4]:
-            if isinstance(row, list) and len(row) >= 2:
-                title_part = row[0]
-                desc_part = row[1] if len(row) > 1 else ""
+        for item in action_items[:4]:
+            if isinstance(item, list) and len(item) >= 2:
+                title_part = item[0]
+                desc_part = item[1] if len(item) > 1 else ""
                 action_html += f'''
                 <div class="action-item">
                     <div class="action-title">{title_part}</div>
                     <div class="action-desc">{desc_part}</div>
                 </div>
                 '''
-            elif isinstance(row, str):
-                action_html += f'''
-                <div class="action-item">
-                    <div class="action-title">{row[:20]}</div>
-                    <div class="action-desc">{row[20:] if len(row) > 20 else ""}</div>
-                </div>
-                '''
+            elif isinstance(item, str):
+                # 尝试按 '【' 分割提取标题
+                if '【触发场景' in item:
+                    parts = item.split('】', 1)
+                    if len(parts) == 2:
+                        title_part = parts[0].strip() + '】'
+                        desc_part = parts[1].strip()
+                        action_html += f'''
+                        <div class="action-item">
+                            <div class="action-title">{title_part}</div>
+                            <div class="action-desc">{desc_part}</div>
+                        </div>
+                        '''
+                    else:
+                        action_html += f'''
+                        <div class="action-item">
+                            <div class="action-title">{item[:30]}</div>
+                            <div class="action-desc">{item[30:] if len(item) > 30 else ""}</div>
+                        </div>
+                        '''
+                else:
+                    # 普通文本，按前20字符分割
+                    action_html += f'''
+                    <div class="action-item">
+                        <div class="action-title">{item[:20]}</div>
+                        <div class="action-desc">{item[20:] if len(item) > 20 else ""}</div>
+                    </div>
+                    '''
     else:
         action_html = '<div class="action-item">暂无行动建议</div>'
 
