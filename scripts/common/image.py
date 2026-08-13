@@ -146,18 +146,14 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     conclusion_markers = ['本周关键结论', '关键结论', '本期关键结论', '核心判断']
     
     for line in lines:
-        # 检测是否进入关键结论区块
         if any(marker in line for marker in conclusion_markers):
             in_conclusion_section = True
             continue
         
         if in_conclusion_section:
-            # 遇到下一个二级标题（##）时退出
             if line.startswith('##') and '结论' not in line and '关键' not in line:
                 in_conclusion_section = False
                 continue
-            
-            # 遇到三级标题时退出
             if line.startswith('###'):
                 in_conclusion_section = False
                 continue
@@ -166,53 +162,47 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if not clean:
                 continue
             
-            # 格式1：> - 结论内容（农牧周报标准格式）
-            if clean.startswith('> - '):
-                content = clean[4:].strip()
-                content = re.sub(r'\*\*', '', content)
-                if content:
-                    conclusions.append('• ' + content)
-                continue
-            
-            # 格式2：> 结论内容（没有 - 的引用块）
-            if clean.startswith('> '):
-                content = clean[2:].strip()
-                content = re.sub(r'\*\*', '', content)
-                if content:
-                    conclusions.append('• ' + content)
-                continue
-            
-            # 格式3：- 结论内容（普通列表）
+            # 格式1：- 结论内容（最常用）
             if clean.startswith('- '):
                 content = clean[2:].strip()
                 content = re.sub(r'\*\*', '', content)
-                if content:
+                if content and len(content) > 5:
                     conclusions.append('• ' + content)
                 continue
             
-            # 格式4：**关键词**：内容（人力周报的关键结论格式）
+            # 格式2：> - 结论内容
+            if clean.startswith('> - '):
+                content = clean[4:].strip()
+                content = re.sub(r'\*\*', '', content)
+                if content and len(content) > 5:
+                    conclusions.append('• ' + content)
+                continue
+            
+            # 格式3：> 结论内容
+            if clean.startswith('> '):
+                content = clean[2:].strip()
+                content = re.sub(r'\*\*', '', content)
+                if content and len(content) > 5:
+                    conclusions.append('• ' + content)
+                continue
+            
+            # 格式4：**关键词**：内容
             if clean.startswith('**') and '**' in clean[2:]:
                 content = re.sub(r'\*\*', '', clean)
                 content = re.sub(r'^[：:]\s*', '', content)
-                if content:
+                if content and len(content) > 5:
                     conclusions.append('• ' + content)
                 continue
             
             # 格式5：普通文本（兜底）
             if len(clean) > 10 and not clean.startswith('|') and '【来源' not in clean and '```' not in clean:
                 conclusions.append('• ' + clean[:150])
-                if len(conclusions) >= 5:
-                    break
 
     # ===== 6. 提取行动建议（支持多种格式） =====
     action_items = []
     in_action_section = False
-    current_scene = ""
-    current_advice = ""
-    scene_triggered = False
     
     for line in lines:
-        # 检测行动建议区块
         if '行动建议' in line:
             in_action_section = True
             continue
@@ -220,7 +210,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if not in_action_section:
             continue
         
-        # 遇到下一个二级标题时退出
         if line.startswith('##') and '行动' not in line and '建议' not in line:
             in_action_section = False
             break
@@ -229,107 +218,48 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if not clean:
             continue
         
-        # ---- 格式1：01 | 【触发场景】... | 【行动建议】...（单行完整格式） ----
+        # 格式1：01 | 【触发场景】... | 【行动建议】...
         if re.match(r'^[0-9]{2}\s*\|', clean) and '【触发场景】' in clean and '【行动建议】' in clean:
-            # 如果包含完整的触发场景和行动建议，直接提取
             scene_match = re.search(r'【触发场景[：:]\s*([^【]+?)(?=【行动建议]|$)', clean)
             advice_match = re.search(r'【行动建议[：:]\s*(.+?)(?=$)', clean)
             if scene_match and advice_match:
                 action_items.append([scene_match.group(1).strip(), advice_match.group(1).strip()])
             continue
         
-        # ---- 格式2：01 | （只标序号，后续行是内容，处理多行格式） ----
+        # 格式2：只有序号开头的行（但内容在同一行）
         if re.match(r'^[0-9]{2}\s*\|', clean):
-            # 如果当前有暂存的条目，先保存
-            if current_scene and current_advice:
-                action_items.append([current_scene, current_advice])
-                current_scene = ""
-                current_advice = ""
-                scene_triggered = False
-            # 提取这一行中可能存在的触发场景或行动建议
+            # 尝试提取触发场景
             if '【触发场景】' in clean:
-                scene_match = re.search(r'【触发场景[：:]\s*(.+?)(?=【|$)', clean)
+                scene_match = re.search(r'【触发场景[：:]\s*([^【]+?)(?=【|$)', clean)
                 if scene_match:
-                    current_scene = scene_match.group(1).strip()
-                    scene_triggered = True
-            if '【行动建议】' in clean:
-                advice_match = re.search(r'【行动建议[：:]\s*(.+?)(?=$)', clean)
-                if advice_match:
-                    current_advice = advice_match.group(1).strip()
-                    if current_scene and current_advice:
-                        action_items.append([current_scene, current_advice])
-                        current_scene = ""
-                        current_advice = ""
-                        scene_triggered = False
+                    scene = scene_match.group(1).strip()
+                    # 继续提取行动建议（可能在同一行）
+                    if '【行动建议】' in clean:
+                        adv_match = re.search(r'【行动建议[：:]\s*(.+?)(?=$)', clean)
+                        if adv_match:
+                            action_items.append([scene, adv_match.group(1).strip()])
             continue
         
-        # ---- 格式3：同一行同时包含触发场景和行动建议（但没有序号） ----
-        if '【触发场景】' in clean and '【行动建议】' in clean:
-            scene_match = re.search(r'【触发场景[：:]\s*([^【]+?)(?=【行动建议]|$)', clean)
-            advice_match = re.search(r'【行动建议[：:]\s*(.+?)(?=$)', clean)
-            if scene_match and advice_match:
-                action_items.append([scene_match.group(1).strip(), advice_match.group(1).strip()])
-            continue
-        
-        # ---- 格式4：分行的触发场景和行动建议 ----
-        if '【触发场景】' in clean and not scene_triggered:
-            scene_match = re.search(r'【触发场景[：:]\s*(.+?)(?=$)', clean)
-            if scene_match:
-                current_scene = scene_match.group(1).strip()
-                scene_triggered = True
-            continue
-        
-        if '【行动建议】' in clean and scene_triggered:
-            advice_match = re.search(r'【行动建议[：:]\s*(.+?)(?=$)', clean)
-            if advice_match:
-                current_advice = advice_match.group(1).strip()
-                if current_scene and current_advice:
-                    action_items.append([current_scene, current_advice])
-                current_scene = ""
-                current_advice = ""
-                scene_triggered = False
-            continue
-        
-        # ---- 格式5：表格格式 ----
+        # 格式3：表格格式
         if '|' in clean and '---' not in clean:
             cells = [c.strip() for c in clean.split('|') if c.strip()]
             if len(cells) >= 2 and not any(kw in ''.join(cells) for kw in ['维度', '具体建议', '数据/案例支撑']):
                 if len(cells) >= 2:
                     action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
             continue
-        
-        # ---- 格式6：编号内容（如 01. xxx）----
-        if re.match(r'^[0-9]{2}\.', clean) or re.match(r'^[0-9]{2}、', clean):
-            content = re.sub(r'^[0-9]{2}[\.、]\s*', '', clean)
-            if content and len(content) > 5:
-                # 尝试按"："拆分为标题+内容
-                if '：' in content:
-                    parts = content.split('：', 1)
-                    action_items.append([parts[0].strip(), parts[1].strip()])
-                else:
-                    action_items.append(content[:30])
-            continue
-        
-        # ---- 格式7：带冒号的正文行（可能是触发场景的延续） ----
-        if scene_triggered and clean and not clean.startswith('**') and len(clean) > 5:
-            # 如果已经触发了场景但还没有行动建议，把这一行作为场景的补充
-            current_scene += " " + clean
-            continue
 
-    # 保存最后一条暂存的条目
-    if current_scene and current_advice:
-        action_items.append([current_scene, current_advice])
-
-    # ===== 7. 提取卡片数据（保持不动） =====
+    # ===== 7. 提取卡片数据（放宽匹配条件） =====
     card_data = []
     in_card_section = False
     
     for line in lines:
-        if '本周卡片数据' in line or '数据卡片' in line:
+        # 匹配任何包含"卡片"的二级标题，不限于固定名称
+        if '##' in line and '卡片' in line:
             in_card_section = True
             continue
         
         if in_card_section:
+            # 遇到下一个二级标题（不含"卡片"）时退出
             if line.startswith('##') and '卡片' not in line:
                 in_card_section = False
                 continue
@@ -347,8 +277,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                             'value': value,
                             'change': change
                         })
+                    else:
+                        # 没有 | 分隔符，直接取 rest 作为 value
+                        card_data.append({
+                            'name': name,
+                            'value': rest,
+                            'change': ""
+                        })
 
-    # ===== 8. 卡片渲染（保持不动） =====
+    # ===== 8. 卡片渲染 =====
     cards_html = ''
     if card_data and len(card_data) >= 4:
         for card in card_data[:4]:
@@ -371,7 +308,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 </div>
                 '''
 
-    # ===== 9. 生成表格 =====
+    # ===== 9-14. 生成表格、结论、要闻、竞品、行动建议HTML =====
     table_html = ''
     if table_data:
         table_html = '<table><thead><tr><th>指标</th><th>本期数据</th><th>趋势</th></tr></thead><tbody>'
@@ -385,7 +322,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         table_html = '<p style="color:#999;text-align:center;">暂无数据</p>'
 
-    # ===== 10. 生成结论 =====
     conclusions_html = ''
     if conclusions:
         for c in conclusions[:5]:
@@ -393,7 +329,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         conclusions_html = '<li>暂无关键结论</li>'
 
-    # ===== 11. 生成要闻 =====
     news_html = ''
     if news_items:
         for item in news_items[:6]:
@@ -401,7 +336,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         news_html = '<li>暂无要闻</li>'
 
-    # ===== 12. 生成竞品表格 =====
     competitor_html = ''
     if competitor_data:
         competitor_html = f'<table><thead><tr>'
@@ -417,7 +351,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
-    # ===== 13. 生成行动建议HTML =====
     action_html = ''
     if action_items:
         for item in action_items[:4]:
@@ -440,7 +373,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         action_html = '<div class="action-item">暂无行动建议</div>'
 
-    # ===== 14. 完整HTML模板 =====
     html_content = f'''<!DOCTYPE html>
 <html>
 <head>
