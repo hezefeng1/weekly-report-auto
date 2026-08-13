@@ -102,9 +102,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     target_len = len(competitor_headers)
                     while len(cells) < target_len:
                         cells.append('—')
-                    # 清理加粗标记
                     cells = [c.replace('**', '') for c in cells]
-                    # 对最新简讯列（最后一列）提取纯文本标题，去掉 URL
+                    # 对最新简讯列提取纯文本标题
                     if len(cells) > 0:
                         last_idx = len(cells) - 1
                         if '[' in cells[last_idx] and '](' in cells[last_idx]:
@@ -201,7 +200,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if len(clean) > 10 and not clean.startswith('|') and '【来源' not in clean and '```' not in clean:
                 conclusions.append('• ' + clean[:150])
 
-    # ===== 6. 提取行动建议（表格格式） =====
+    # ===== 6. 提取行动建议（表格格式，支持两种表头） =====
     action_items = []
     in_action_section = False
     
@@ -221,13 +220,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if not clean:
             continue
         
-        # 表格格式：| 序号 | 触发场景 | 行动建议 |
+        # 表格格式
         if '|' in clean and '---' not in clean:
             cells = [c.strip() for c in clean.split('|') if c.strip()]
             if len(cells) >= 3:
                 header_text = ''.join(cells)
-                if '序号' in header_text and '触发场景' in header_text:
+                # 跳过表头（支持两种格式）
+                if any(kw in header_text for kw in ['维度', '具体建议', '数据/案例支撑', '序号', '触发场景', '行动建议']):
                     continue
+                # 数据行
                 if len(cells) >= 3:
                     action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
 
