@@ -21,16 +21,13 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     # ===== 1. 提取标题和日期 =====
     title = "农牧行业周报"
     report_date = ""
-    report_type = 'hr'  # 默认人力资源
+    report_type = 'hr'
     
     for line in lines[:15]:
         if '# 农牧行业人力资源周报' in line:
             title = "农牧行业人力资源周报"
             report_type = 'hr'
-        elif '# 生猪养殖产业链市场周报' in line:
-            title = "生猪养殖产业链市场周报"
-            report_type = 'agri'
-        elif '# 农牧行业周报' in line:
+        elif '# 生猪养殖产业链市场周报' in line or '# 农牧行业周报' in line:
             title = "农牧行业周报"
             report_type = 'agri'
         
@@ -79,7 +76,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     competitor_data = []
     in_competitor = False
 
-    # 根据周报类型确定竞品表头
     if report_type == 'agri':
         competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新简讯']
         company_names = ['牧原股份', '温氏股份', '海大集团', '正大集团', '双胞胎集团']
@@ -100,10 +96,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if len(cells) < 4:
                     continue
                 header_text = ''.join(cells)
-                # 检测表头
                 if '企业' in header_text:
                     continue
-                # 检测数据行
                 first_cell = cells[0].replace('**', '').strip()
                 if any(kw in first_cell for kw in company_names):
                     target_len = len(competitor_headers)
@@ -169,7 +163,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 clean = clean[1:].strip()
             clean = re.sub(r'\*\*', '', clean)
             if clean and len(clean) > 10 and len(clean) < 300:
-                # 处理编号列表
                 items = re.split(r'[①②③④⑤⑥⑦⑧⑨⑩]', clean)
                 items = [item.strip() for item in items if item.strip()]
                 if items:
@@ -193,12 +186,15 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if clean.startswith('>'):
                 clean = clean[1:].strip()
             clean = re.sub(r'\*\*', '', clean)
+            # 【修复1】跳过标题行（如 "- **本期**："）
+            if re.match(r'^-\s*\*\*[^*]+\*\*[：:]?\s*$', clean):
+                continue
             if clean and len(clean) > 10 and len(clean) < 250:
                 conclusions.append('• ' + clean)
                 if len(conclusions) >= 5:
                     break
 
-    # ===== 6. 提取行动建议（支持多种格式） =====
+    # ===== 6. 提取行动建议 =====
     action_items = []
     in_action = False
     action_skip = ['行动建议', 'HR行动建议', '维度', '具体建议', '数据/案例支撑']
@@ -248,11 +244,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                             cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                             action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
 
-    # =========================================================
-    # ===== 7. 提取卡片数据（支持两种标题） =====
-    # =========================================================
-
-    # 根据周报类型设置卡片映射
+    # ===== 7. 提取卡片数据 =====
     if report_type == 'agri':
         card_mapping = {
             '生猪均价': '生猪均价',
@@ -272,7 +264,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     in_card_section = False
     for line in lines:
-        # 支持两种标题：本周卡片数据 或 数据卡片
         if '本周卡片数据' in line or '数据卡片' in line:
             in_card_section = True
             continue
@@ -299,49 +290,86 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     ]
 
     # =========================================================
-    # ===== 8. 卡片两行拆分 + 生成 HTML =====
+    # ===== 8. 卡片渲染（根据类型决定布局） =====
     # =========================================================
 
     cards = []
     for card in cards_raw:
-        value = card['value']
         label = card['label']
-        first_line = value
-        second_line = None
+        value = card['value']
         
-        if isinstance(value, str) and '|' in value:
-            parts = value.split('|', 1)
-            first_line = parts[0].strip()
-            second_line = parts[1].strip()
-            if first_line and first_line[0] in ['↑', '↓']:
-                first_line = f'<span class="up">{first_line[0]}</span>{first_line[1:]}'
+        if report_type == 'agri':
+            # 【修复3】农牧周报卡片三行布局：标签 → 数值 → 变化
+            first_line = label
+            second_line = '--'
+            third_line = ''
+            
+            if isinstance(value, str) and '|' in value:
+                parts = value.split('|', 1)
+                second_line = parts[0].strip()
+                third_line = parts[1].strip()
+            else:
+                second_line = value
+            
+            cards.append({
+                'label': label,
+                'first_line': first_line,
+                'second_line': second_line,
+                'third_line': third_line,
+                'layout': 'three_row'
+            })
         else:
+            # 人力资源周报卡片两行布局
             first_line = value
-        
-        cards.append({
-            'label': label,
-            'first_line': first_line,
-            'second_line': second_line
-        })
+            second_line = None
+            
+            if isinstance(value, str) and '|' in value:
+                parts = value.split('|', 1)
+                first_line = parts[0].strip()
+                second_line = parts[1].strip()
+                if first_line and first_line[0] in ['↑', '↓']:
+                    first_line = f'<span class="up">{first_line[0]}</span>{first_line[1:]}'
+            else:
+                first_line = value
+            
+            cards.append({
+                'label': label,
+                'first_line': first_line,
+                'second_line': second_line,
+                'third_line': '',
+                'layout': 'two_row'
+            })
 
     cards_html = ''
     for card in cards:
-        if card['second_line']:
+        if card['layout'] == 'three_row':
+            # 农牧周报三行卡片
             cards_html += f'''
             <div class="card">
-                <div class="card-value">{card['first_line']}</div>
-                <div class="card-sub">{card['second_line']}</div>
-                <div class="card-label">{card['label']}</div>
+                <div class="card-name">{card['label']}</div>
+                <div class="card-value">{card['second_line']}</div>
+                <div class="card-change">{card['third_line']}</div>
             </div>
             '''
         else:
-            cards_html += f'''
-            <div class="card">
-                <div class="card-value">{card['first_line']}</div>
-                <div class="card-label">{card['label']}</div>
-            </div>
-            '''
+            # 人力资源周报两行卡片
+            if card['second_line']:
+                cards_html += f'''
+                <div class="card">
+                    <div class="card-value">{card['first_line']}</div>
+                    <div class="card-sub">{card['second_line']}</div>
+                    <div class="card-label">{card['label']}</div>
+                </div>
+                '''
+            else:
+                cards_html += f'''
+                <div class="card">
+                    <div class="card-value">{card['first_line']}</div>
+                    <div class="card-label">{card['label']}</div>
+                </div>
+                '''
 
+    # ===== 9. 生成表格 =====
     table_html = ''
     if table_data:
         table_html = '<table><thead><tr><th>指标</th><th>本期数据</th><th>趋势</th></tr></thead><tbody>'
@@ -355,6 +383,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         table_html = '<p style="color:#999;text-align:center;">暂无数据</p>'
 
+    # ===== 10. 生成结论 =====
     conclusions_html = ''
     if conclusions:
         for c in conclusions[:5]:
@@ -362,6 +391,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         conclusions_html = '<li>暂无关键结论</li>'
 
+    # ===== 11. 生成要闻 =====
     news_html = ''
     if news_items:
         for item in news_items[:6]:
@@ -369,7 +399,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         news_html = '<li>暂无要闻</li>'
 
-    # ===== 竞品HTML =====
+    # ===== 12. 生成竞品表格 =====
     competitor_html = ''
     if competitor_data:
         competitor_html = f'<table><thead><tr>'
@@ -385,7 +415,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
-    # ===== 行动建议HTML =====
+    # ===== 13. 生成行动建议HTML =====
     action_html = ''
     if action_items:
         for item in action_items[:4]:
@@ -399,7 +429,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 </div>
                 '''
             elif isinstance(item, str):
-                # 尝试按 '【' 分割提取标题
                 if '【触发场景' in item:
                     parts = item.split('】', 1)
                     if len(parts) == 2:
@@ -419,7 +448,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                         </div>
                         '''
                 else:
-                    # 普通文本，按前20字符分割
                     action_html += f'''
                     <div class="action-item">
                         <div class="action-title">{item[:20]}</div>
@@ -429,6 +457,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         action_html = '<div class="action-item">暂无行动建议</div>'
 
+    # ===== 14. 完整HTML模板 =====
     html_content = f'''<!DOCTYPE html>
 <html>
 <head>
@@ -495,13 +524,25 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             min-width: 0;
             word-break: break-word;
         }}
+        .card-name {{
+            font-size: 14px;
+            font-weight: 600;
+            color: #888;
+            margin-bottom: 4px;
+        }}
         .card-value {{
-            font-size: 20px;
+            font-size: 22px;
             font-weight: 700;
             color: #1a3a5c;
-            line-height: 1.3;
+            line-height: 1.2;
             max-width: 100%;
             text-align: center;
+        }}
+        .card-change {{
+            font-size: 15px;
+            font-weight: 500;
+            color: #555;
+            margin-top: 2px;
         }}
         .card-value .up {{ color: #2e7d32; }}
         .card-value .down {{ color: #c62828; }}
