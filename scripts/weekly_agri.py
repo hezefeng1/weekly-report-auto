@@ -115,7 +115,7 @@ def generate_weekly_agri_report():
 ## 排版风格要求：财经杂志风（参考《财新周刊》）
 
 ### 一、顶部横幅设计
-- 大标题：# 生猪养殖产业链市场周报 ({today})
+- 大标题：# 农牧行业周报 ({today})
 - 一句话核心摘要（加粗，点明本期最重要趋势）
 
 ### 二、数据卡片（顶部4个关键数据，固定字段）
@@ -237,7 +237,7 @@ def generate_weekly_agri_report():
 
 请开始生成周报。"""
 
-    user_prompt = f"请生成 {today} 的生猪养殖产业链市场周报，信息时间为最近7天（{last_week} 至 {today}）。"
+    user_prompt = f"请生成 {today} 的农牧行业周报，信息时间为最近7天（{last_week} 至 {today}）。"
 
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -265,7 +265,7 @@ def generate_weekly_agri_report():
 
 def main():
     print("=" * 50)
-    print("🚀 生猪养殖产业链市场周报自动化")
+    print("🚀 农牧行业周报自动化")
     print("=" * 50)
     
     print("\n1. 生成周报 Markdown...")
@@ -293,7 +293,7 @@ def main():
             except Exception as e:
                 print(f"   ❌ 发送给 {open_id} 失败: {e}")
     
-    print("\n✅ 农牧市场周报发送完成！")
+    print("\n✅ 农牧行业周报发送完成！")
 
 if __name__ == "__main__":
     main()
