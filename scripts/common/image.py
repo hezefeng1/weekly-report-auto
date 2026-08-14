@@ -71,20 +71,18 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     cells = [re.sub(r'\*\*', '', c) for c in cells]
                     table_data.append(cells[:3])
 
-    # ===== 3. 提取竞品对比表（动态匹配列） =====
+    # ===== 3. 提取竞品对比表 =====
     competitor_data = []
     in_competitor = False
 
-    # 根据周报类型确定竞品表头
+    # 根据周报类型使用不同的表头
     if report_type == 'agri':
-        competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新新闻']
+        competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新动态']
         company_names = ['牧原股份', '温氏股份', '海大集团', '正大集团', '双胞胎集团']
     else:
-        competitor_headers = ['企业', '招聘策略', '人才培养', '薪酬激励', '组织/人效', '最新动态']
+        competitor_headers = ['企业', '招聘策略', '人才培养', '薪酬激励', '组织效能', '最新动态']
         company_names = ['牧原股份', '温氏股份', '海大集团', '双胞胎集团', '正大集团']
 
-    # 收集所有表格行
-    table_rows = []
     for line in lines:
         if '竞品动态' in line or '竞品HR动态' in line or '行业竞品HR动态' in line:
             in_competitor = True
@@ -95,52 +93,27 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 continue
             if '|' in line and '---' not in line:
                 cells = [c.strip() for c in line.split('|') if c.strip()]
-                if len(cells) >= 3:
-                    table_rows.append(cells)
-
-    # 从表格行中解析表头和数据
-    if table_rows:
-        # 找表头行
-        header_row_idx = -1
-        for i, row in enumerate(table_rows):
-            header_text = ''.join(row)
-            if '企业' in header_text or '竞品企业' in header_text:
-                header_row_idx = i
-                break
-        
-        if header_row_idx >= 0 and header_row_idx + 1 < len(table_rows):
-            header_cells = table_rows[header_row_idx]
-            data_rows = table_rows[header_row_idx + 1:]
-            
-            # 动态匹配列：根据 header_cells 和 competitor_headers 匹配
-            col_mapping = {}
-            for idx, cell in enumerate(header_cells):
-                for header in competitor_headers:
-                    if header in cell or cell in header:
-                        col_mapping[header] = idx
-                        break
-            
-            # 提取数据行
-            for row in data_rows:
-                if len(row) < 2:
+                if len(cells) < 4:
                     continue
-                first_cell = row[0].replace('**', '').strip()
+                header_text = ''.join(cells)
+                # 检测表头
+                if '企业' in header_text:
+                    continue
+                # 检测数据行
+                first_cell = cells[0].replace('**', '').strip()
                 if any(kw in first_cell for kw in company_names):
-                    ordered_row = []
-                    for header in competitor_headers:
-                        if header in col_mapping:
-                            idx = col_mapping[header]
-                            ordered_row.append(row[idx] if idx < len(row) else '—')
-                        else:
-                            ordered_row.append('—')
-                    ordered_row = [c.replace('**', '') for c in ordered_row]
-                    # 对最后一列提取纯文本标题（去掉 Markdown 链接）
-                    last_idx = len(ordered_row) - 1
-                    if last_idx >= 0 and '[' in ordered_row[last_idx] and '](' in ordered_row[last_idx]:
-                        match = re.search(r'\[([^\]]+)\]\([^\)]+\)', ordered_row[last_idx])
-                        if match:
-                            ordered_row[last_idx] = match.group(1)
-                    competitor_data.append(ordered_row)
+                    target_len = len(competitor_headers)
+                    while len(cells) < target_len:
+                        cells.append('—')
+                    cells = [c.replace('**', '') for c in cells]
+                    # 对最新动态列提取纯文本标题
+                    if len(cells) > 0:
+                        last_idx = len(cells) - 1
+                        if '[' in cells[last_idx] and '](' in cells[last_idx]:
+                            match = re.search(r'\[([^\]]+)\]\([^\)]+\)', cells[last_idx])
+                            if match:
+                                cells[last_idx] = match.group(1)
+                    competitor_data.append(cells[:target_len])
 
     # ===== 4. 提取要闻 =====
     news_items = []
