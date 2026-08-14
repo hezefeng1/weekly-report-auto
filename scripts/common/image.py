@@ -103,7 +103,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     while len(cells) < target_len:
                         cells.append('—')
                     cells = [c.replace('**', '') for c in cells]
-                    # 对最新简讯列提取纯文本标题
                     if len(cells) > 0:
                         last_idx = len(cells) - 1
                         if '[' in cells[last_idx] and '](' in cells[last_idx]:
@@ -182,7 +181,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 content = clean[2:].strip()
                 content = re.sub(r'\*\*', '', content)
                 if content:
-                    # 如果包含 ①②③④⑤，按编号拆分
                     if '①' in content or '②' in content or '③' in content or '④' in content or '⑤' in content:
                         parts = re.split(r'[①②③④⑤]', content)
                         for part in parts:
@@ -213,7 +211,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if len(clean) > 10 and not clean.startswith('|') and '【来源' not in clean and '```' not in clean:
                 conclusions.append('• ' + clean[:150])
 
-    # ===== 6. 提取行动建议（表格格式） =====
+    # ===== 6. 提取行动建议（表格格式，清理加粗符号） =====
     action_items = []
     in_action_section = False
     
@@ -240,7 +238,9 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if any(kw in header_text for kw in ['序号', '触发场景', '行动建议', '维度', '具体建议', '数据/案例支撑']):
                     continue
                 if len(cells) >= 3:
-                    action_items.append(cells[:3] if len(cells) >= 3 else cells[:2])
+                    # 清理所有单元格中的 ** 标记
+                    cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
+                    action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
 
     # ===== 7. 提取卡片数据 =====
     card_data = []
@@ -264,7 +264,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     if ' | ' in rest:
                         value = rest.split(' | ')[0].strip()
                         change = rest.split(' | ')[1].strip() if len(rest.split(' | ')) > 1 else ""
-                        # 清理加粗符号
                         value = value.strip('*')
                         change = change.strip('*')
                         card_data.append({
@@ -280,7 +279,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                             'change': ""
                         })
 
-    # ===== 8. 卡片渲染（无保底逻辑） =====
+    # ===== 8. 卡片渲染 =====
     cards_html = ''
     if card_data and len(card_data) >= 4:
         for card in card_data[:4]:
@@ -292,7 +291,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             </div>
             '''
     else:
-        # 解析失败时显示占位符
         for i in range(4):
             cards_html += f'''
             <div class="card">
@@ -348,13 +346,13 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
-    # ===== 13. 生成行动建议HTML =====
+    # ===== 13. 生成行动建议HTML（清理加粗符号） =====
     action_html = ''
     if action_items:
         for item in action_items[:4]:
             if isinstance(item, list) and len(item) >= 2:
-                title_part = item[0]
-                desc_part = item[1] if len(item) > 1 else ""
+                title_part = re.sub(r'\*\*', '', item[0])
+                desc_part = re.sub(r'\*\*', '', item[1]) if len(item) > 1 else ""
                 action_html += f'''
                 <div class="action-item">
                     <div class="action-title">{title_part}</div>
@@ -362,6 +360,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 </div>
                 '''
             elif isinstance(item, str):
+                item = re.sub(r'\*\*', '', item)
                 action_html += f'''
                 <div class="action-item">
                     <div class="action-title">{item[:20]}</div>
