@@ -90,13 +90,13 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
         "Content-Type": "application/json"
     }
     
-    # 1. 创建表格（必须包含 property 字段）
+    # 1. 创建表格（必须包含 property 字段，用 column_size 和 row_size）
     table_block = {
         "block_type": 11,
         "table": {
             "property": {
-                "column_count": len(headers),
-                "row_count": len(rows) + 1
+                "column_size": len(headers),
+                "row_size": len(rows) + 1
             }
         }
     }
