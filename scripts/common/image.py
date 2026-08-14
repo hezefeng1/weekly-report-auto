@@ -77,7 +77,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
 
     # 根据周报类型确定竞品表头
     if report_type == 'agri':
-        competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新简讯']
+        competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新新闻']
         company_names = ['牧原股份', '温氏股份', '海大集团', '正大集团', '双胞胎集团']
     else:
         competitor_headers = ['企业', '招聘策略', '人才培养', '薪酬激励', '组织/人效', '最新动态']
@@ -125,8 +125,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     col_mapping['薪酬激励'] = idx
                 elif '组织' in cell or '人效' in cell or '效能' in cell:
                     col_mapping['组织/人效'] = idx
-                elif '最新' in cell or '动态' in cell or '简讯' in cell:
-                    col_mapping['最新动态'] = idx
+                elif '最新' in cell or '动态' in cell or '简讯' in cell or '新闻' in cell:
+                    col_mapping['最新新闻'] = idx
                 elif '财务' in cell:
                     col_mapping['财务表现'] = idx
                 elif '战略' in cell:
@@ -148,7 +148,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                         else:
                             ordered_row.append('—')
                     ordered_row = [c.replace('**', '') for c in ordered_row]
-                    # 对最新动态列提取纯文本标题
+                    # 对最新新闻列提取纯文本标题
                     last_idx = len(ordered_row) - 1
                     if last_idx >= 0 and '[' in ordered_row[last_idx] and '](' in ordered_row[last_idx]:
                         match = re.search(r'\[([^\]]+)\]\([^\)]+\)', ordered_row[last_idx])
