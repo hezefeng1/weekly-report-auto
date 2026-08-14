@@ -1,9 +1,8 @@
 import requests
 import json
 import re
-import time
 
-# ========== 基础函数 ==========
+# ========== 原有函数 ==========
 
 def get_tenant_access_token(app_id, app_secret):
     """获取飞书 tenant_access_token"""
@@ -84,7 +83,6 @@ def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省
 def update_doc_with_table(access_token, doc_id, headers, rows):
     """
     在飞书文档中创建表格（分步创建：表格 → 行 → 单元格 → 内容）
-    支持链接格式 [文本](URL)
     """
     root_block_id = doc_id
     headers_req = {
@@ -92,12 +90,14 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
         "Content-Type": "application/json"
     }
     
-    # 1. 创建表格
+    # 1. 创建表格（必须包含 property 字段）
     table_block = {
         "block_type": 11,
         "table": {
-            "column_count": len(headers),
-            "row_count": len(rows) + 1
+            "property": {
+                "column_count": len(headers),
+                "row_count": len(rows) + 1
+            }
         }
     }
     resp = requests.post(
@@ -112,12 +112,10 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
     table_id = resp.json()["data"]["children"][0]["block_id"]
     print(f"  📊 表格创建成功，ID: {table_id}")
     
-    # 2. 合并所有数据（表头 + 数据行）
+    # 2. 遍历所有行和列，逐个创建
     all_data = [headers] + rows
-    
-    # 3. 遍历所有行和列，逐个创建
     for row_idx, row_data in enumerate(all_data):
-        # 3.1 创建行
+        # 2.1 创建行
         row_block = {"block_type": 12, "table_row": {}}
         resp = requests.post(
             f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{table_id}/children",
@@ -130,9 +128,8 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
             resp.raise_for_status()
         row_id = resp.json()["data"]["children"][0]["block_id"]
         
-        # 3.2 为该行创建单元格
+        # 2.2 为该行创建单元格
         for col_idx, cell_data in enumerate(row_data):
-            # 创建单元格
             cell_block = {"block_type": 13, "table_cell": {}}
             resp = requests.post(
                 f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{row_id}/children",
@@ -141,44 +138,46 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
                 timeout=60
             )
             if resp.status_code != 200:
-                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列单元格创建失败")
+                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列单元格创建失败: {resp.text}")
                 continue
             cell_id = resp.json()["data"]["children"][0]["block_id"]
             
-            # 3.3 向单元格写入内容
+            # 2.3 向单元格写入内容
             # 检测是否为链接格式 [文本](URL)
             link_match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', cell_data)
             if link_match:
                 text = link_match.group(1)
                 url = link_match.group(2)
-                # 构建带链接的文本元素
-                text_element = {
-                    "text_run": {
-                        "content": text,
-                        "text_element_style": {
-                            "link": url
-                        }
+                content_block = {
+                    "block_type": 3,
+                    "text": {
+                        "elements": [
+                            {
+                                "text_run": {
+                                    "content": text,
+                                    "text_element_style": {
+                                        "link": url
+                                    }
+                                }
+                            }
+                        ]
                     }
                 }
             else:
-                # 普通文本
-                text_element = {
-                    "text_run": {
-                        "content": cell_data
+                content_block = {
+                    "block_type": 3,
+                    "text": {
+                        "elements": [
+                            {"text_run": {"content": cell_data}}
+                        ]
                     }
                 }
             # 表头行加粗
             if row_idx == 0:
-                if "text_element_style" not in text_element["text_run"]:
-                    text_element["text_run"]["text_element_style"] = {}
-                text_element["text_run"]["text_element_style"]["bold"] = True
+                if "text_element_style" not in content_block["text"]["elements"][0]["text_run"]:
+                    content_block["text"]["elements"][0]["text_run"]["text_element_style"] = {}
+                content_block["text"]["elements"][0]["text_run"]["text_element_style"]["bold"] = True
             
-            content_block = {
-                "block_type": 3,
-                "text": {
-                    "elements": [text_element]
-                }
-            }
             resp = requests.post(
                 f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{cell_id}/children",
                 headers=headers_req,
@@ -186,42 +185,10 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
                 timeout=60
             )
             if resp.status_code != 200:
-                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列内容写入失败")
+                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列内容写入失败: {resp.text}")
         
         if (row_idx + 1) % 5 == 0:
             print(f"  ✅ 已完成 {row_idx + 1}/{len(all_data)} 行")
     
     print(f"  ✅ 表格写入完成，共 {len(rows)} 行数据")
     return table_id
-
-
-def parse_markdown_table_to_rows(markdown_text):
-    """
-    解析 Markdown 表格，返回 headers 和 rows
-    每行数据转为字典，key 为表头字段
-    """
-    lines = markdown_text.strip().split('\n')
-    if len(lines) < 2:
-        return None, None
-    
-    # 跳过分隔行（|---|）
-    data_lines = [line for line in lines if '---' not in line]
-    if len(data_lines) < 2:
-        return None, None
-    
-    # 解析表头
-    header_line = data_lines[0]
-    headers = [h.strip() for h in header_line.split('|') if h.strip()]
-    
-    # 解析数据行
-    rows = []
-    for line in data_lines[1:]:
-        cells = [c.strip() for c in line.split('|') if c.strip()]
-        if cells:
-            row_dict = {}
-            for i, cell in enumerate(cells):
-                if i < len(headers):
-                    row_dict[headers[i]] = cell
-            rows.append(row_dict)
-    
-    return headers, rows
