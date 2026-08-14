@@ -190,46 +190,37 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
     for row in rows:
         if len(row) < 7:
             continue
-        # row 顺序：省份、城市、政策名称、核心申请条件、补贴标准/金额、开放申请及截止日期、政策原文链接
         province = row[0]
         city = row[1]
         policy_name_raw = row[2]
         deadline = row[5] if len(row) > 5 else "详见原文"
 
-        # 提取政策名称和链接
         display_name, link_url = extract_link(policy_name_raw)
 
-        # 组装一行政策内容
         line_parts = []
-
-        # 省份城市
         line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
 
-        # 政策名称（可点击链接）
         if link_url:
             line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
         else:
             line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
 
-        # 截止日期
         line_parts.append({"tag": "text", "text": f"\n⏰ 截止：{deadline}"})
 
-        # 添加这一行到消息
         content_elements.append(line_parts)
         policy_count += 1
 
-        # 行间分隔线
         content_elements.append([
             {"tag": "text", "text": "\n─────────────────────\n"}
         ])
 
-    # 底部统计
     content_elements.append([
         {"tag": "text", "text": f"📊 共找到 {policy_count} 条政策"}
     ])
 
     # 构建飞书 post 消息
-    send_url = "https://open.feishu.cn/open-apis/im/v1/messages"
+    # receive_id_type 作为查询参数，不是请求体字段
+    send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -237,7 +228,6 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     payload = {
         "receive_id": receive_id,
-        "receive_id_type": "open_id",
         "msg_type": "post",
         "content": json.dumps({
             "post": {
