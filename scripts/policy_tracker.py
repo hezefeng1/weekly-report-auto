@@ -175,19 +175,17 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
     # 构建富文本内容
     content_elements = []
 
-    # 标题
+    # 标题行
     content_elements.append([
         {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）\n\n"}
     ])
 
-    # 分隔线
-    content_elements.append([
-        {"tag": "text", "text": "─────────────────────\n"}
-    ])
-
-    # 遍历每条政策
+    # 遍历每条政策（限制最多20条，避免消息超长）
     policy_count = 0
+    max_policies = 20
     for row in rows:
+        if policy_count >= max_policies:
+            break
         if len(row) < 7:
             continue
         province = row[0]
@@ -210,16 +208,24 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         content_elements.append(line_parts)
         policy_count += 1
 
+        # 分隔线（最后一条不加）
+        if policy_count < len(rows) and policy_count < max_policies:
+            content_elements.append([
+                {"tag": "text", "text": "\n─────────────────────\n"}
+            ])
+
+    # 底部统计
+    total_count = len(rows)
+    if total_count > max_policies:
         content_elements.append([
-            {"tag": "text", "text": "\n─────────────────────\n"}
+            {"tag": "text", "text": f"\n📊 共找到 {total_count} 条政策，当前展示前 {max_policies} 条"}
+        ])
+    else:
+        content_elements.append([
+            {"tag": "text", "text": f"\n📊 共找到 {total_count} 条政策"}
         ])
 
-    content_elements.append([
-        {"tag": "text", "text": f"📊 共找到 {policy_count} 条政策"}
-    ])
-
     # 构建飞书 post 消息
-    # receive_id_type 作为查询参数，不是请求体字段
     send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
