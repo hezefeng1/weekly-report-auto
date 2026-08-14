@@ -71,10 +71,11 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     cells = [re.sub(r'\*\*', '', c) for c in cells]
                     table_data.append(cells[:3])
 
-    # ===== 3. 提取竞品对比表 =====
+    # ===== 3. 提取竞品对比表（动态匹配列） =====
     competitor_data = []
     in_competitor = False
 
+    # 根据周报类型确定竞品表头
     if report_type == 'agri':
         competitor_headers = ['企业', '财务表现', '战略动态', '经营动作', '最新简讯']
         company_names = ['牧原股份', '温氏股份', '海大集团', '正大集团', '双胞胎集团']
@@ -82,6 +83,8 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         competitor_headers = ['企业', '招聘策略', '人才培养', '薪酬激励', '组织/人效', '最新动态']
         company_names = ['牧原股份', '温氏股份', '海大集团', '双胞胎集团', '正大集团']
 
+    # 收集所有表格行
+    table_rows = []
     for line in lines:
         if '竞品动态' in line or '竞品HR动态' in line or '行业竞品HR动态' in line:
             in_competitor = True
@@ -92,24 +95,66 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 continue
             if '|' in line and '---' not in line:
                 cells = [c.strip() for c in line.split('|') if c.strip()]
-                if len(cells) < 4:
+                if len(cells) >= 3:
+                    table_rows.append(cells)
+
+    # 从表格行中解析表头和数据
+    if table_rows:
+        # 找表头行
+        header_row_idx = -1
+        for i, row in enumerate(table_rows):
+            header_text = ''.join(row)
+            if '企业' in header_text or '竞品企业' in header_text:
+                header_row_idx = i
+                break
+        
+        if header_row_idx >= 0 and header_row_idx + 1 < len(table_rows):
+            header_cells = table_rows[header_row_idx]
+            data_rows = table_rows[header_row_idx + 1:]
+            
+            # 根据表头内容确定列映射
+            col_mapping = {}
+            for idx, cell in enumerate(header_cells):
+                if '企业' in cell or '竞品企业' in cell:
+                    col_mapping['企业'] = idx
+                elif '招聘' in cell:
+                    col_mapping['招聘策略'] = idx
+                elif '人才' in cell or '培养' in cell:
+                    col_mapping['人才培养'] = idx
+                elif '薪酬' in cell or '激励' in cell:
+                    col_mapping['薪酬激励'] = idx
+                elif '组织' in cell or '人效' in cell or '效能' in cell:
+                    col_mapping['组织/人效'] = idx
+                elif '最新' in cell or '动态' in cell or '简讯' in cell:
+                    col_mapping['最新动态'] = idx
+                elif '财务' in cell:
+                    col_mapping['财务表现'] = idx
+                elif '战略' in cell:
+                    col_mapping['战略动态'] = idx
+                elif '经营' in cell or '动作' in cell:
+                    col_mapping['经营动作'] = idx
+            
+            # 提取数据行
+            for row in data_rows:
+                if len(row) < 2:
                     continue
-                header_text = ''.join(cells)
-                if '企业' in header_text:
-                    continue
-                first_cell = cells[0].replace('**', '').strip()
+                first_cell = row[0].replace('**', '').strip()
                 if any(kw in first_cell for kw in company_names):
-                    target_len = len(competitor_headers)
-                    while len(cells) < target_len:
-                        cells.append('—')
-                    cells = [c.replace('**', '') for c in cells]
-                    if len(cells) > 0:
-                        last_idx = len(cells) - 1
-                        if '[' in cells[last_idx] and '](' in cells[last_idx]:
-                            match = re.search(r'\[([^\]]+)\]\([^\)]+\)', cells[last_idx])
-                            if match:
-                                cells[last_idx] = match.group(1)
-                    competitor_data.append(cells[:target_len])
+                    ordered_row = []
+                    for header in competitor_headers:
+                        if header in col_mapping:
+                            idx = col_mapping[header]
+                            ordered_row.append(row[idx] if idx < len(row) else '—')
+                        else:
+                            ordered_row.append('—')
+                    ordered_row = [c.replace('**', '') for c in ordered_row]
+                    # 对最新动态列提取纯文本标题
+                    last_idx = len(ordered_row) - 1
+                    if last_idx >= 0 and '[' in ordered_row[last_idx] and '](' in ordered_row[last_idx]:
+                        match = re.search(r'\[([^\]]+)\]\([^\)]+\)', ordered_row[last_idx])
+                        if match:
+                            ordered_row[last_idx] = match.group(1)
+                    competitor_data.append(ordered_row)
 
     # ===== 4. 提取要闻 =====
     news_items = []
@@ -146,7 +191,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
         if len(news_items) >= 5:
             break
 
-    # ===== 5. 提取关键结论（增强兼容性） =====
+    # ===== 5. 提取关键结论 =====
     conclusions = []
     in_conclusion_section = False
     conclusion_markers = ['本周关键结论', '关键结论', '本期关键结论', '核心判断']
@@ -168,7 +213,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
             if not clean:
                 continue
             
-            # 格式1：> - 内容（标准格式）
             if clean.startswith('> - '):
                 content = clean[4:].strip()
                 content = re.sub(r'\*\*', '', content)
@@ -176,7 +220,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     conclusions.append('• ' + content)
                 continue
             
-            # 格式2：> 内容（没有短横线）
             if clean.startswith('> '):
                 content = clean[2:].strip()
                 content = re.sub(r'\*\*', '', content)
@@ -191,7 +234,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                         conclusions.append('• ' + content)
                 continue
             
-            # 格式3：- 内容（普通列表，带短横线）
             if clean.startswith('- '):
                 content = clean[2:].strip()
                 content = re.sub(r'\*\*', '', content)
@@ -199,7 +241,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     conclusions.append('• ' + content)
                 continue
             
-            # 格式4：**关键词**：内容（老格式，兜底）
             if clean.startswith('**') and '**' in clean[2:]:
                 content = re.sub(r'\*\*', '', clean)
                 content = re.sub(r'^[：:]\s*', '', content)
@@ -207,11 +248,10 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                     conclusions.append('• ' + content)
                 continue
             
-            # 格式5：普通文本（兜底）
             if len(clean) > 10 and not clean.startswith('|') and '【来源' not in clean and '```' not in clean:
                 conclusions.append('• ' + clean[:150])
 
-    # ===== 6. 提取行动建议（表格格式，清理加粗符号） =====
+    # ===== 6. 提取行动建议 =====
     action_items = []
     in_action_section = False
     
@@ -238,7 +278,6 @@ def markdown_to_image(markdown_text, output_path="report.png"):
                 if any(kw in header_text for kw in ['序号', '触发场景', '行动建议', '维度', '具体建议', '数据/案例支撑']):
                     continue
                 if len(cells) >= 3:
-                    # 清理所有单元格中的 ** 标记
                     cleaned_cells = [re.sub(r'\*\*', '', c) for c in cells]
                     action_items.append(cleaned_cells[:3] if len(cleaned_cells) >= 3 else cleaned_cells[:2])
 
@@ -346,7 +385,7 @@ def markdown_to_image(markdown_text, output_path="report.png"):
     else:
         competitor_html = '<p style="color:#999;text-align:center;">暂无竞品数据</p>'
 
-    # ===== 13. 生成行动建议HTML（清理加粗符号） =====
+    # ===== 13. 生成行动建议HTML =====
     action_html = ''
     if action_items:
         for item in action_items[:4]:
