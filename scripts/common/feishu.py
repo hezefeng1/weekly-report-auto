@@ -1,7 +1,7 @@
 import requests
 import json
 
-# ========== 原有函数保持不变 ==========
+# ========== 原有函数 ==========
 
 def get_tenant_access_token(app_id, app_secret):
     """获取飞书 tenant_access_token"""
@@ -55,71 +55,66 @@ def create_doc(access_token, title, content):
     doc_id = resp.json()["data"]["document"]["document_id"]
     print(f"  📄 文档创建成功，ID: {doc_id}")
 
-    # 2. 文档根节点就是 doc_id 本身
+    # 2. 获取文档根节点 block_id
     root_block_id = doc_id
     update_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children"
     
-    # 3. 将 Markdown 内容转换为飞书 block 结构
-    lines = content.split('\n')
-    all_blocks = []
+    # 3. 直接把完整内容作为一个文本块写入
+    # 限制内容长度，避免超出 API 限制
+    max_content_length = 30000
+    if len(content) > max_content_length:
+        content = content[:max_content_length] + "\n...（内容过长，已截断）"
     
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # 检测 Markdown 标题
-        if line.startswith('# '):
-            all_blocks.append({
-                "block_type": 1,  # 标题1
-                "heading1": {"content": line[2:].strip()}
-            })
-        elif line.startswith('## '):
-            all_blocks.append({
-                "block_type": 2,  # 标题2
-                "heading2": {"content": line[3:].strip()}
-            })
-        elif line.startswith('|') and '---' in line:
-            # 表格分隔行，跳过
-            continue
-        else:
-            # 普通文本（包括表格行）
-            all_blocks.append({
+    block = {
+        "block_type": 3,  # 文本块
+        "text": {
+            "elements": [
+                {"text_run": {"content": content}}
+            ]
+        }
+    }
+    
+    update_payload = {"children": [block]}
+    resp = requests.post(update_url, headers=headers, json=update_payload, timeout=60)
+    if resp.status_code == 400:
+        print("  ⚠️ 单块写入失败，尝试分段写入...")
+        # 分段写入
+        chunk_size = 2000
+        chunks = [content[i:i+chunk_size] for i in range(0, len(content), chunk_size)]
+        success_count = 0
+        for idx, chunk in enumerate(chunks):
+            if not chunk.strip():
+                continue
+            block = {
                 "block_type": 3,
-                "text": {"elements": [{"text_run": {"content": line}}]}
-            })
-    
-    # 如果没有内容，加一个占位
-    if not all_blocks:
-        all_blocks.append({
-            "block_type": 3,
-            "text": {"elements": [{"text_run": {"content": "暂无政策数据"}}]}
-        })
-    
-    # 4. 分批写入
-    batch_size = 20
-    for i in range(0, len(all_blocks), batch_size):
-        batch = all_blocks[i:i+batch_size]
-        update_payload = {"children": batch}
-        resp = requests.post(update_url, headers=headers, json=update_payload, timeout=60)
-        if resp.status_code == 400:
-            print(f"  ⚠️ 第 {i//batch_size + 1} 批写入失败 (400)，尝试逐条写入...")
-            # 逐个写入，跳过有问题的块
-            for block in batch:
-                try:
-                    resp2 = requests.post(update_url, headers=headers, json={"children": [block]}, timeout=60)
-                    if resp2.status_code != 200:
-                        print(f"    ⚠️ 跳过问题块: {block.get('block_type')}")
-                except Exception as e:
-                    print(f"    ⚠️ 跳过问题块: {e}")
-            continue
+                "text": {
+                    "elements": [
+                        {"text_run": {"content": chunk}}
+                    ]
+                }
+            }
+            try:
+                resp2 = requests.post(update_url, headers=headers, json={"children": [block]}, timeout=60)
+                if resp2.status_code == 200:
+                    success_count += 1
+                    print(f"    ✅ 第 {idx+1} 段写入成功")
+                else:
+                    print(f"    ⚠️ 第 {idx+1} 段写入失败 (状态码: {resp2.status_code})")
+            except Exception as e:
+                print(f"    ⚠️ 第 {idx+1} 段写入失败: {e}")
+        print(f"  ✅ 文档内容分段写入完成，成功 {success_count}/{len(chunks)} 段")
+    else:
         resp.raise_for_status()
-        print(f"  ✅ 写入第 {i//batch_size + 1} 批，共 {len(batch)} 个块")
+        print(f"  ✅ 文档内容写入完成")
     
-    print(f"  ✅ 文档内容写入完成，共 {len(all_blocks)} 个块")
     return doc_id
 
 def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省"):
     """发送飞书云文档链接消息"""
+    if not receive_id or receive_id == "":
+        print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
+        return None
+    
     doc_url = f"https://feishu.cn/docs/{doc_id}"
     message_text = f"📋 **2026年人社补贴政策追踪（{region}）**\n\n政策追踪报告已生成，点击查看：\n{doc_url}"
     
