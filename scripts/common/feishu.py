@@ -1,8 +1,9 @@
 import requests
 import json
 import re
+import time
 
-# ========== 原有函数 ==========
+# ========== 基础函数 ==========
 
 def get_tenant_access_token(app_id, app_secret):
     """获取飞书 tenant_access_token"""
@@ -82,12 +83,10 @@ def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省
 
 def update_doc_with_table(access_token, doc_id, headers, rows):
     """
-    在飞书文档中创建表格
-    headers: 表头列表，如 ['省份', '城市', '政策名称', '核心申请条件', '补贴标准/金额', '开放申请及截止日期', '政策原文链接']
-    rows: 数据行列表，每行是一个字典，key 为表头字段
+    在飞书文档中创建表格（分步创建：表格 → 行 → 单元格 → 内容）
+    支持链接格式 [文本](URL)
     """
     root_block_id = doc_id
-    update_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children"
     headers_req = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -95,133 +94,111 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
     
     # 1. 创建表格
     table_block = {
-        "block_type": 11,  # 表格块
+        "block_type": 11,
         "table": {
             "column_count": len(headers),
-            "row_count": len(rows) + 1  # + 表头行
+            "row_count": len(rows) + 1
         }
     }
-    resp = requests.post(update_url, headers=headers_req, json={"children": [table_block]}, timeout=60)
-    resp.raise_for_status()
+    resp = requests.post(
+        f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children",
+        headers=headers_req,
+        json={"children": [table_block]},
+        timeout=60
+    )
+    if resp.status_code != 200:
+        print(f"  ❌ 创建表格失败: {resp.text}")
+        resp.raise_for_status()
     table_id = resp.json()["data"]["children"][0]["block_id"]
-    print(f"  📊 表格创建成功，列数: {len(headers)}，行数: {len(rows) + 1}")
+    print(f"  📊 表格创建成功，ID: {table_id}")
     
-    # 2. 构建表格内容（表头 + 数据行）
-    # 获取表格的 children 接口（用于添加行）
-    table_children_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{table_id}/children"
+    # 2. 合并所有数据（表头 + 数据行）
+    all_data = [headers] + rows
     
-    # 2.1 添加表头行
-    header_row_id = _add_table_row(table_children_url, headers_req, headers, is_header=True)
-    print(f"  📌 表头行创建成功")
-    
-    # 2.2 添加数据行
-    for idx, row in enumerate(rows):
-        # 将行数据按 headers 顺序转为列表
-        row_data = [row.get(h, '') for h in headers]
-        _add_table_row(table_children_url, headers_req, row_data, is_header=False, row_idx=idx)
-        if (idx + 1) % 10 == 0:
-            print(f"  ✅ 已写入 {idx + 1}/{len(rows)} 行")
+    # 3. 遍历所有行和列，逐个创建
+    for row_idx, row_data in enumerate(all_data):
+        # 3.1 创建行
+        row_block = {"block_type": 12, "table_row": {}}
+        resp = requests.post(
+            f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{table_id}/children",
+            headers=headers_req,
+            json={"children": [row_block]},
+            timeout=60
+        )
+        if resp.status_code != 200:
+            print(f"  ❌ 第 {row_idx+1} 行创建失败: {resp.text}")
+            resp.raise_for_status()
+        row_id = resp.json()["data"]["children"][0]["block_id"]
+        
+        # 3.2 为该行创建单元格
+        for col_idx, cell_data in enumerate(row_data):
+            # 创建单元格
+            cell_block = {"block_type": 13, "table_cell": {}}
+            resp = requests.post(
+                f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{row_id}/children",
+                headers=headers_req,
+                json={"children": [cell_block]},
+                timeout=60
+            )
+            if resp.status_code != 200:
+                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列单元格创建失败")
+                continue
+            cell_id = resp.json()["data"]["children"][0]["block_id"]
+            
+            # 3.3 向单元格写入内容
+            # 检测是否为链接格式 [文本](URL)
+            link_match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', cell_data)
+            if link_match:
+                text = link_match.group(1)
+                url = link_match.group(2)
+                # 构建带链接的文本元素
+                text_element = {
+                    "text_run": {
+                        "content": text,
+                        "text_element_style": {
+                            "link": url
+                        }
+                    }
+                }
+            else:
+                # 普通文本
+                text_element = {
+                    "text_run": {
+                        "content": cell_data
+                    }
+                }
+            # 表头行加粗
+            if row_idx == 0:
+                if "text_element_style" not in text_element["text_run"]:
+                    text_element["text_run"]["text_element_style"] = {}
+                text_element["text_run"]["text_element_style"]["bold"] = True
+            
+            content_block = {
+                "block_type": 3,
+                "text": {
+                    "elements": [text_element]
+                }
+            }
+            resp = requests.post(
+                f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{cell_id}/children",
+                headers=headers_req,
+                json={"children": [content_block]},
+                timeout=60
+            )
+            if resp.status_code != 200:
+                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列内容写入失败")
+        
+        if (row_idx + 1) % 5 == 0:
+            print(f"  ✅ 已完成 {row_idx + 1}/{len(all_data)} 行")
     
     print(f"  ✅ 表格写入完成，共 {len(rows)} 行数据")
     return table_id
 
 
-def _add_table_row(table_children_url, headers, cells_data, is_header=False, row_idx=0):
-    """
-    在表格中添加一行
-    table_children_url: 表格的 children 接口 URL
-    headers: 请求头
-    cells_data: 单元格数据列表
-    is_header: 是否为表头行
-    """
-    # 创建行
-    row_block = {
-        "block_type": 12,  # 表格行
-        "table_row": {}
-    }
-    resp = requests.post(table_children_url, headers=headers, json={"children": [row_block]}, timeout=60)
-    resp.raise_for_status()
-    row_id = resp.json()["data"]["children"][0]["block_id"]
-    
-    # 创建单元格
-    cells_url = f"{table_children_url.replace('/children', '')}/{row_id}/children"
-    
-    for col_idx, cell_data in enumerate(cells_data):
-        # 每个单元格是一个 block
-        cell_block = {
-            "block_type": 13,  # 表格单元格
-            "table_cell": {}
-        }
-        resp_cell = requests.post(cells_url, headers=headers, json={"children": [cell_block]}, timeout=60)
-        if resp_cell.status_code != 200:
-            print(f"    ⚠️ 第 {row_idx + 1} 行第 {col_idx + 1} 列单元格创建失败")
-            continue
-        cell_id = resp_cell.json()["data"]["children"][0]["block_id"]
-        
-        # 向单元格写入内容
-        cell_content_url = f"{cells_url.replace('/children', '')}/{cell_id}/children"
-        content_to_write = _build_cell_content(cell_data, is_header)
-        if content_to_write:
-            resp_content = requests.post(cell_content_url, headers=headers, json={"children": content_to_write}, timeout=60)
-            if resp_content.status_code != 200:
-                print(f"    ⚠️ 第 {row_idx + 1} 行第 {col_idx + 1} 列内容写入失败")
-    
-    return row_id
-
-
-def _build_cell_content(cell_data, is_header):
-    """
-    构建单元格内容
-    如果 cell_data 是链接格式 [文本](URL)，则创建带链接的文本块
-    """
-    if not cell_data:
-        return None
-    
-    # 检测是否包含 Markdown 链接 [文本](URL)
-    link_match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', cell_data)
-    if link_match:
-        text = link_match.group(1)
-        url = link_match.group(2)
-        # 只显示文本，实际链接通过飞书文档的链接功能
-        # 飞书文档中，链接是通过 text_run 的 style 实现的
-        block = {
-            "block_type": 3,  # 文本块
-            "text": {
-                "elements": [
-                    {
-                        "text_run": {
-                            "content": text,
-                            "text_element_style": {
-                                "link": url  # 飞书文档链接
-                            }
-                        }
-                    }
-                ]
-            }
-        }
-        # 如果是表头，加粗
-        if is_header:
-            block["text"]["elements"][0]["text_run"]["text_element_style"]["bold"] = True
-        return [block]
-    
-    # 普通文本
-    block = {
-        "block_type": 3,
-        "text": {
-            "elements": [
-                {"text_run": {"content": cell_data}}
-            ]
-        }
-    }
-    if is_header:
-        block["text"]["elements"][0]["text_run"]["text_element_style"] = {"bold": True}
-    
-    return [block]
-
-
 def parse_markdown_table_to_rows(markdown_text):
     """
     解析 Markdown 表格，返回 headers 和 rows
+    每行数据转为字典，key 为表头字段
     """
     lines = markdown_text.strip().split('\n')
     if len(lines) < 2:
