@@ -192,3 +192,34 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
     
     print(f"  ✅ 表格写入完成，共 {len(rows)} 行数据")
     return table_id
+
+
+def parse_markdown_table_to_rows(markdown_text):
+    """
+    解析 Markdown 表格，返回 headers 和 rows
+    """
+    lines = markdown_text.strip().split('\n')
+    if len(lines) < 2:
+        return None, None
+    
+    # 跳过分隔行（|---|）
+    data_lines = [line for line in lines if '---' not in line]
+    if len(data_lines) < 2:
+        return None, None
+    
+    # 解析表头
+    header_line = data_lines[0]
+    headers = [h.strip() for h in header_line.split('|') if h.strip()]
+    
+    # 解析数据行
+    rows = []
+    for line in data_lines[1:]:
+        cells = [c.strip() for c in line.split('|') if c.strip()]
+        if cells:
+            row_dict = {}
+            for i, cell in enumerate(cells):
+                if i < len(headers):
+                    row_dict[headers[i]] = cell
+            rows.append(row_dict)
+    
+    return headers, rows
