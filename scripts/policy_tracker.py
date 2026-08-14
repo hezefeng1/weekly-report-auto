@@ -167,22 +167,22 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息"""
+    """发送飞书富文本消息（使用 md 标签）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return
 
-    # 构建富文本内容
-    content_elements = []
+    # 构建 Markdown 表格内容
+    md_lines = []
+    md_lines.append(f"# 📋 2026年人社补贴政策追踪（{region}）\n")
 
-    # 标题行
-    content_elements.append([
-        {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）\n\n"}
-    ])
+    # 表头
+    md_lines.append("| 省份 | 城市 | 政策名称 | 截止日期 |")
+    md_lines.append("|------|------|----------|----------|")
 
-    # 遍历每条政策（限制最多20条，避免消息超长）
+    # 遍历数据行（限制最多 25 条避免超长）
     policy_count = 0
-    max_policies = 20
+    max_policies = 25
     for row in rows:
         if policy_count >= max_policies:
             break
@@ -195,37 +195,23 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
         display_name, link_url = extract_link(policy_name_raw)
 
-        line_parts = []
-        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
-
         if link_url:
-            line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
+            policy_cell = f"[{display_name}]({link_url})"
         else:
-            line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
+            policy_cell = display_name
 
-        line_parts.append({"tag": "text", "text": f"\n⏰ 截止：{deadline}"})
-
-        content_elements.append(line_parts)
+        md_lines.append(f"| {province} | {city} | {policy_cell} | {deadline} |")
         policy_count += 1
 
-        # 分隔线（最后一条不加）
-        if policy_count < len(rows) and policy_count < max_policies:
-            content_elements.append([
-                {"tag": "text", "text": "\n─────────────────────\n"}
-            ])
-
-    # 底部统计
     total_count = len(rows)
     if total_count > max_policies:
-        content_elements.append([
-            {"tag": "text", "text": f"\n📊 共找到 {total_count} 条政策，当前展示前 {max_policies} 条"}
-        ])
+        md_lines.append(f"\n📊 共找到 {total_count} 条政策，当前展示前 {max_policies} 条")
     else:
-        content_elements.append([
-            {"tag": "text", "text": f"\n📊 共找到 {total_count} 条政策"}
-        ])
+        md_lines.append(f"\n📊 共找到 {total_count} 条政策")
 
-    # 构建飞书 post 消息
+    md_content = "\n".join(md_lines)
+
+    # 构造飞书 post 消息（content 必须是 JSON 字符串）
     send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -236,11 +222,11 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "receive_id": receive_id,
         "msg_type": "post",
         "content": json.dumps({
-            "post": {
-                "zh_cn": {
-                    "title": f"2026年人社补贴政策追踪（{region}）",
-                    "content": content_elements
-                }
+            "zh_cn": {
+                "title": f"2026年人社补贴政策追踪（{region}）",
+                "content": [
+                    [{"tag": "md", "text": md_content}]
+                ]
             }
         })
     }
