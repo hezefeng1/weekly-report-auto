@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 from common.feishu import (
     get_tenant_access_token,
     create_doc,
-    send_doc_link_message
+    update_doc_with_table,
+    send_doc_link_message,
+    parse_markdown_table_to_rows
 )
 
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
@@ -143,6 +145,7 @@ def generate_policy_report():
     print("=== 内容结束 ===")
     return content
 
+
 def main():
     print("=" * 50)
     print("📋 人社补贴政策追踪（西南四省）")
@@ -151,17 +154,24 @@ def main():
     print("\n1. 生成政策追踪报告...")
     md_content = generate_policy_report()
     
-    print("\n2. 获取飞书 token...")
+    print("\n2. 解析 Markdown 表格...")
+    headers, rows = parse_markdown_table_to_rows(md_content)
+    if not headers or not rows:
+        print("  ❌ 未能解析出表格数据，请检查 DeepSeek 输出格式")
+        return
+    
+    print(f"  ✅ 解析成功，表头: {len(headers)} 列，数据: {len(rows)} 行")
+    
+    print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
     
-    print("\n3. 创建飞书云文档...")
-    doc_id = create_doc(
-        token,
-        title="2026年人社补贴政策追踪（西南四省）",
-        content=md_content
-    )
+    print("\n4. 创建飞书云文档...")
+    doc_id = create_doc(token, "2026年人社补贴政策追踪（西南四省）")
     
-    print("\n4. 发送文档链接...")
+    print("\n5. 写入表格...")
+    update_doc_with_table(token, doc_id, headers, rows)
+    
+    print("\n6. 发送文档链接...")
     send_doc_link_message(token, RECEIVE_OPEN_ID_POLICY, doc_id, "西南四省")
     
     print("\n✅ 政策追踪报告发送完成！")
