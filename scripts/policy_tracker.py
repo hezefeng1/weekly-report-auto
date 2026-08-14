@@ -1,18 +1,14 @@
 import os
 import requests
+import re
 from datetime import datetime, timedelta
-from common.feishu import (
-    get_tenant_access_token,
-    create_doc,
-    update_doc_with_table,
-    send_doc_link_message,
-    parse_markdown_table_to_rows
-)
+from common.feishu import get_tenant_access_token
 
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
 FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+
 
 def generate_policy_report():
     """调用 DeepSeek API 生成政策追踪报告"""
@@ -44,7 +40,6 @@ def generate_policy_report():
 - 列表页
 - 转发/转载页面
 
-
 ## 城市清单
 
 **四川省**：达州市、德阳市、乐山市、泸州市、眉山市、绵阳市、南充市、西昌市、资阳市、自贡市、成都市、广安市、广元市
@@ -54,7 +49,6 @@ def generate_policy_report():
 **云南省**：德宏傣族景颇族自治州、昆明市、曲靖市
 
 **贵州省**：毕节市、贵阳市、黔东南苗族侗族自治州、遵义市、六盘水市、黔西南布依族苗族自治州
-
 
 ## 搜索要求
 
@@ -74,7 +68,6 @@ def generate_policy_report():
 - 发布日期：2026年1月1日之后
 - 截止日期必须晚于当前日期
 
-
 ## 核心信息要素
 
 | 字段 | 要求 |
@@ -87,12 +80,10 @@ def generate_policy_report():
 | 开放申请及截止日期 | 格式：YYYY-MM-DD |
 | 政策原文链接 | 可点击的官方政策原文URL |
 
-
 ## 搜索关键词组合
 
 对每个城市使用以下关键词搜索（site:.gov.cn）：
 稳岗补贴、稳岗返还、就业补贴、培训补贴、扩岗补贴、吸纳就业补贴、招工补贴、见习补贴、引才奖励、返乡就业补贴、残疾人安置补贴
-
 
 ## 输出格式
 
@@ -106,7 +97,6 @@ def generate_policy_report():
 - 市级政策：城市列填写具体城市名称
 - 同一城市多个政策：每个政策单独一行
 - 无新政策的城市：不输出该城市
-
 
 ## 输出前自检清单
 
@@ -134,47 +124,165 @@ def generate_policy_report():
         "temperature": 0.3,
         "stream": False
     }
-    
+
     print("  📡 正在联网搜索西南四省人社补贴政策...")
     resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
     print(f"  ✅ 生成完成，共 {len(content)} 字符")
-    print("=== DeepSeek 返回的完整 Markdown 内容 ===")
-    print(content)
-    print("=== 内容结束 ===")
     return content
+
+
+def parse_markdown_table_to_list(markdown_text):
+    """
+    解析 Markdown 表格，返回 headers 和 rows（列表形式）
+    """
+    lines = markdown_text.strip().split('\n')
+    if len(lines) < 2:
+        return None, None
+
+    data_lines = [line for line in lines if '---' not in line]
+    if len(data_lines) < 2:
+        return None, None
+
+    header_line = data_lines[0]
+    headers = [h.strip() for h in header_line.split('|') if h.strip()]
+
+    rows = []
+    for line in data_lines[1:]:
+        cells = [c.strip() for c in line.split('|') if c.strip()]
+        if cells:
+            rows.append(cells)
+
+    return headers, rows
+
+
+def extract_link(text):
+    """提取 Markdown 链接 [文本](URL) 中的 URL，返回 (显示文本, URL)"""
+    match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
+    if match:
+        return match.group(1), match.group(2)
+    return text, None
+
+
+def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
+    """发送飞书富文本消息"""
+    if not receive_id or receive_id == "":
+        print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
+        return
+
+    # 构建富文本内容
+    content_elements = []
+
+    # 标题
+    content_elements.append([
+        {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）\n\n"}
+    ])
+
+    # 分隔线
+    content_elements.append([
+        {"tag": "text", "text": "─────────────────────\n"}
+    ])
+
+    # 遍历每条政策
+    policy_count = 0
+    for row in rows:
+        if len(row) < 7:
+            continue
+        # row 顺序：省份、城市、政策名称、核心申请条件、补贴标准/金额、开放申请及截止日期、政策原文链接
+        province = row[0]
+        city = row[1]
+        policy_name_raw = row[2]
+        deadline = row[5] if len(row) > 5 else "详见原文"
+
+        # 提取政策名称和链接
+        display_name, link_url = extract_link(policy_name_raw)
+
+        # 组装一行政策内容
+        line_parts = []
+
+        # 省份城市
+        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
+
+        # 政策名称（可点击链接）
+        if link_url:
+            line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
+        else:
+            line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
+
+        # 截止日期
+        line_parts.append({"tag": "text", "text": f"\n⏰ 截止：{deadline}"})
+
+        # 添加这一行到消息
+        content_elements.append(line_parts)
+        policy_count += 1
+
+        # 行间分隔线
+        content_elements.append([
+            {"tag": "text", "text": "\n─────────────────────\n"}
+        ])
+
+    # 底部统计
+    content_elements.append([
+        {"tag": "text", "text": f"📊 共找到 {policy_count} 条政策"}
+    ])
+
+    # 构建飞书 post 消息
+    send_url = "https://open.feishu.cn/open-apis/im/v1/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "receive_id": receive_id,
+        "receive_id_type": "open_id",
+        "msg_type": "post",
+        "content": json.dumps({
+            "post": {
+                "zh_cn": {
+                    "title": f"2026年人社补贴政策追踪（{region}）",
+                    "content": content_elements
+                }
+            }
+        })
+    }
+
+    resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"  ❌ 发送消息失败: {resp.text}")
+        resp.raise_for_status()
+
+    print(f"  ✅ 富文本消息发送成功，共 {policy_count} 条政策")
 
 
 def main():
     print("=" * 50)
     print("📋 人社补贴政策追踪（西南四省）")
     print("=" * 50)
-    
+
     print("\n1. 生成政策追踪报告...")
     md_content = generate_policy_report()
-    
+    print("=== DeepSeek 返回的完整 Markdown 内容 ===")
+    print(md_content)
+    print("=== 内容结束 ===")
+
     print("\n2. 解析 Markdown 表格...")
-    headers, rows = parse_markdown_table_to_rows(md_content)
+    headers, rows = parse_markdown_table_to_list(md_content)
     if not headers or not rows:
         print("  ❌ 未能解析出表格数据，请检查 DeepSeek 输出格式")
         return
-    
+
     print(f"  ✅ 解析成功，表头: {len(headers)} 列，数据: {len(rows)} 行")
-    
+
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
-    
-    print("\n4. 创建飞书云文档...")
-    doc_id = create_doc(token, "2026年人社补贴政策追踪（西南四省）")
-    
-    print("\n5. 写入表格...")
-    update_doc_with_table(token, doc_id, headers, rows)
-    
-    print("\n6. 发送文档链接...")
-    send_doc_link_message(token, RECEIVE_OPEN_ID_POLICY, doc_id, "西南四省")
-    
+
+    print("\n4. 发送富文本消息...")
+    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows, "西南四省")
+
     print("\n✅ 政策追踪报告发送完成！")
+
 
 if __name__ == "__main__":
     main()
