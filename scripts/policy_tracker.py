@@ -40,6 +40,8 @@ def generate_policy_report():
 - 栏目页
 - 列表页
 - 转发/转载页面
+- 搜索结果页
+- 摘要页
 
 ## 城市清单
 
@@ -93,6 +95,12 @@ def generate_policy_report():
 - 表格表头：省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 开放申请及截止日期 | 政策原文链接
 - 政策名称列：使用 `[政策名称](政策原文URL)` 格式
 
+### 链接质量要求
+- URL 必须是政策原文页面的直接链接，不含 `?` 或 `&` 追踪参数
+- 禁止输出搜索结果页、列表页、摘要页的链接
+- 链接格式必须为 `http://xxx.gov.cn/xxx/xxx.html` 形式
+- 如果无法获取稳定的政策原文链接，宁可该条政策不输出
+
 ### 数据处理规则
 - 省级政策覆盖多个城市：城市列用顿号分隔
 - 市级政策：城市列填写具体城市名称
@@ -104,6 +112,7 @@ def generate_policy_report():
 - [ ] 日期合规：开放申请日期 ≥ 2026-01-01
 - [ ] 日期有效：截止日期 > 当前日期
 - [ ] 链接原文合规：URL含 /art/、/zhengce/、/policy/ 等路径
+- [ ] 链接无追踪参数：URL不含 ? 或 &
 - [ ] 来源合规：仅gov.cn官方域名
 - [ ] 无公示文件
 - [ ] 格式极简：仅表格，无多余文字
@@ -167,22 +176,20 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息（使用 md 标签）"""
+    """发送飞书富文本消息（完整 6 列表格）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return
 
-    # 构建 Markdown 表格内容
     md_lines = []
     md_lines.append(f"# 📋 2026年人社补贴政策追踪（{region}）\n")
 
-    # 表头
-    md_lines.append("| 省份 | 城市 | 政策名称 | 截止日期 |")
-    md_lines.append("|------|------|----------|----------|")
+    # 完整 6 列表头（去掉政策原文链接列，因为链接已嵌入政策名称）
+    md_lines.append("| 省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 截止日期 |")
+    md_lines.append("|------|------|----------|--------------|----------------|----------|")
 
-    # 遍历数据行（限制最多 25 条避免超长）
     policy_count = 0
-    max_policies = 25
+    max_policies = 20
     for row in rows:
         if policy_count >= max_policies:
             break
@@ -191,16 +198,20 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         province = row[0]
         city = row[1]
         policy_name_raw = row[2]
+        condition = row[3] if len(row) > 3 else "—"
+        subsidy = row[4] if len(row) > 4 else "—"
         deadline = row[5] if len(row) > 5 else "详见原文"
 
         display_name, link_url = extract_link(policy_name_raw)
 
         if link_url:
-            policy_cell = f"[{display_name}]({link_url})"
+            # 清理链接中的追踪参数
+            clean_url = re.sub(r'\?.*$', '', link_url)
+            policy_cell = f"[{display_name}]({clean_url})"
         else:
             policy_cell = display_name
 
-        md_lines.append(f"| {province} | {city} | {policy_cell} | {deadline} |")
+        md_lines.append(f"| {province} | {city} | {policy_cell} | {condition} | {subsidy} | {deadline} |")
         policy_count += 1
 
     total_count = len(rows)
@@ -211,7 +222,6 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     md_content = "\n".join(md_lines)
 
-    # 构造飞书 post 消息（content 必须是 JSON 字符串）
     send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
