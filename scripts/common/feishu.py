@@ -1,6 +1,7 @@
 import requests
 import json
 import re
+import uuid
 
 # ========== 原有函数 ==========
 
@@ -59,10 +60,10 @@ def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return None
-    
+
     doc_url = f"https://feishu.cn/docs/{doc_id}"
     message_text = f"📋 **2026年人社补贴政策追踪（{region}）**\n\n政策追踪报告已生成，点击查看：\n{doc_url}"
-    
+
     send_url = "https://open.feishu.cn/open-apis/im/v1/messages"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -82,73 +83,59 @@ def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省
 
 def update_doc_with_table(access_token, doc_id, headers, rows):
     """
-    在飞书文档中创建表格（分步创建：表格 → 行 → 单元格 → 内容）
+    在飞书文档中创建表格（使用 /descendant 接口一次性创建完整表格）
     """
     root_block_id = doc_id
     headers_req = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-    
-    # 1. 创建表格（必须包含 property 字段，用 column_size 和 row_size）
+
+    # 构建完整表格树
+    all_data = [headers] + rows
+    row_count = len(all_data)
+    col_count = len(headers)
+
+    # 生成唯一 ID
+    table_id = f"table_{uuid.uuid4().hex[:8]}"
+
+    # 构建 descendants 和 children_id
+    descendants = []
+    children_id = []
+
+    # 1. 创建表格块（block_type: 31）
     table_block = {
-        "block_type": 11,
+        "block_id": table_id,
+        "block_type": 31,
         "table": {
             "property": {
-                "column_size": len(headers),
-                "row_size": len(rows) + 1
+                "row_size": row_count,
+                "column_size": col_count
             }
-        }
+        },
+        "children": []  # 这里放单元格的 block_id
     }
-    resp = requests.post(
-        f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children",
-        headers=headers_req,
-        json={"children": [table_block]},
-        timeout=60
-    )
-    if resp.status_code != 200:
-        print(f"  ❌ 创建表格失败: {resp.text}")
-        resp.raise_for_status()
-    table_id = resp.json()["data"]["children"][0]["block_id"]
-    print(f"  📊 表格创建成功，ID: {table_id}")
-    
-    # 2. 遍历所有行和列，逐个创建
-    all_data = [headers] + rows
+
+    # 2. 创建所有单元格（block_type: 32）
     for row_idx, row_data in enumerate(all_data):
-        # 2.1 创建行
-        row_block = {"block_type": 12, "table_row": {}}
-        resp = requests.post(
-            f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{table_id}/children",
-            headers=headers_req,
-            json={"children": [row_block]},
-            timeout=60
-        )
-        if resp.status_code != 200:
-            print(f"  ❌ 第 {row_idx+1} 行创建失败: {resp.text}")
-            resp.raise_for_status()
-        row_id = resp.json()["data"]["children"][0]["block_id"]
-        
-        # 2.2 为该行创建单元格
         for col_idx, cell_data in enumerate(row_data):
-            cell_block = {"block_type": 13, "table_cell": {}}
-            resp = requests.post(
-                f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{row_id}/children",
-                headers=headers_req,
-                json={"children": [cell_block]},
-                timeout=60
-            )
-            if resp.status_code != 200:
-                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列单元格创建失败: {resp.text}")
-                continue
-            cell_id = resp.json()["data"]["children"][0]["block_id"]
-            
-            # 2.3 向单元格写入内容
-            # 检测是否为链接格式 [文本](URL)
+            cell_id = f"cell_{row_idx}_{col_idx}_{uuid.uuid4().hex[:4]}"
+
+            # 单元格块
+            cell_block = {
+                "block_id": cell_id,
+                "block_type": 32,  # 表格单元格
+                "table_cell": {},
+                "children": []  # 这里放单元格内的文本块
+            }
+
+            # 向单元格写入内容
             link_match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', cell_data)
             if link_match:
                 text = link_match.group(1)
                 url = link_match.group(2)
-                content_block = {
+                text_block = {
+                    "block_id": f"text_{row_idx}_{col_idx}_{uuid.uuid4().hex[:4]}",
                     "block_type": 3,
                     "text": {
                         "elements": [
@@ -161,36 +148,50 @@ def update_doc_with_table(access_token, doc_id, headers, rows):
                                 }
                             }
                         ]
-                    }
+                    },
+                    "children": []
                 }
+                # 表头行加粗
+                if row_idx == 0:
+                    text_block["text"]["elements"][0]["text_run"]["text_element_style"]["bold"] = True
+                cell_block["children"].append(text_block["block_id"])
+                descendants.append(text_block)
             else:
-                content_block = {
+                text_block = {
+                    "block_id": f"text_{row_idx}_{col_idx}_{uuid.uuid4().hex[:4]}",
                     "block_type": 3,
                     "text": {
                         "elements": [
-                            {"text_run": {"content": cell_data}}
+                            {"text_run": {"content": cell_data if cell_data else ""}}
                         ]
-                    }
+                    },
+                    "children": []
                 }
-            # 表头行加粗
-            if row_idx == 0:
-                if "text_element_style" not in content_block["text"]["elements"][0]["text_run"]:
-                    content_block["text"]["elements"][0]["text_run"]["text_element_style"] = {}
-                content_block["text"]["elements"][0]["text_run"]["text_element_style"]["bold"] = True
-            
-            resp = requests.post(
-                f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{cell_id}/children",
-                headers=headers_req,
-                json={"children": [content_block]},
-                timeout=60
-            )
-            if resp.status_code != 200:
-                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列内容写入失败: {resp.text}")
-        
-        if (row_idx + 1) % 5 == 0:
-            print(f"  ✅ 已完成 {row_idx + 1}/{len(all_data)} 行")
-    
-    print(f"  ✅ 表格写入完成，共 {len(rows)} 行数据")
+                if row_idx == 0:
+                    text_block["text"]["elements"][0]["text_run"]["text_element_style"] = {"bold": True}
+                cell_block["children"].append(text_block["block_id"])
+                descendants.append(text_block)
+
+            table_block["children"].append(cell_id)
+            descendants.append(cell_block)
+
+    descendants.append(table_block)
+    children_id.append(table_id)
+
+    # 3. 调用 /descendant 接口
+    url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/descendant"
+    payload = {
+        "index": 0,
+        "children_id": children_id,
+        "descendants": descendants
+    }
+
+    resp = requests.post(url, headers=headers_req, json=payload, timeout=120)
+    if resp.status_code != 200:
+        print(f"  ❌ 创建表格失败: {resp.text}")
+        resp.raise_for_status()
+
+    print(f"  📊 表格创建成功，共 {len(rows)} 行数据")
     return table_id
 
 
@@ -201,16 +202,16 @@ def parse_markdown_table_to_rows(markdown_text):
     lines = markdown_text.strip().split('\n')
     if len(lines) < 2:
         return None, None
-    
+
     # 跳过分隔行（|---|）
     data_lines = [line for line in lines if '---' not in line]
     if len(data_lines) < 2:
         return None, None
-    
+
     # 解析表头
     header_line = data_lines[0]
     headers = [h.strip() for h in header_line.split('|') if h.strip()]
-    
+
     # 解析数据行
     rows = []
     for line in data_lines[1:]:
@@ -221,5 +222,5 @@ def parse_markdown_table_to_rows(markdown_text):
                 if i < len(headers):
                     row_dict[headers[i]] = cell
             rows.append(row_dict)
-    
+
     return headers, rows
