@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import re
+import time
 from datetime import datetime, timedelta
 from common.feishu import get_tenant_access_token
 
@@ -13,7 +14,6 @@ DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
 # ========== 敏感词屏蔽规则 ==========
 SENSITIVE_RULES = [
-    # 组合规则（含逗号，必须同时出现才触发）
     {"type": "all", "words": ["人力社", "高温补贴"]},
     {"type": "all", "words": ["国家", "高温补贴"]},
     {"type": "all", "words": ["人力社", "津贴"]},
@@ -36,13 +36,11 @@ SENSITIVE_RULES = [
     {"type": "all", "words": ["人社部", "个人劳动补贴"]},
     {"type": "all", "words": ["国家财政部", "补贴"]},
     {"type": "all", "words": ["社保补贴", "微信扫码"]},
-    # 正则规则
     {"type": "regex", "pattern": r"^(通 知\.)"},
     {"type": "regex", "pattern": r"(zip|exe|rar|pdf|doc|docx)$"},
     {"type": "regex", "pattern": r"^(\d|\_|\.|\-)"},
     {"type": "regex", "pattern": r"^(\d|\_|\-|\*)"},
     {"type": "regex", "pattern": r"最新卜帖"},
-    # 单独词
     {"type": "any", "words": ["发放"]},
     {"type": "any", "words": ["贴 补"]},
     {"type": "any", "words": ["卜帖"]},
@@ -56,7 +54,9 @@ SENSITIVE_RULES = [
 
 
 def clean_text_for_audit(text):
-    """清洗文本中的敏感词，避免触发飞书 230028 审核"""
+    """清洗文本中的敏感词"""
+    if not text:
+        return "***"
     cleaned = text
     for rule in SENSITIVE_RULES:
         if rule["type"] == "all":
@@ -71,6 +71,8 @@ def clean_text_for_audit(text):
         elif rule["type"] == "any":
             for w in rule["words"]:
                 cleaned = cleaned.replace(w, "***")
+    if not cleaned or cleaned.strip() == "":
+        return "***"
     return cleaned
 
 
@@ -154,15 +156,6 @@ def generate_policy_report():
 - 同一城市多个政策：每个政策单独一行
 - 无新政策的城市：不输出该城市
 
-## 输出前自检清单
-
-- [ ] 日期合规：开放申请日期 ≥ 2026-01-01
-- [ ] 日期有效：截止日期 > 当前日期
-- [ ] 链接原文合规：URL含 /art/、/zhengce/、/policy/ 等路径
-- [ ] 来源合规：仅gov.cn官方域名
-- [ ] 无公示文件
-- [ ] 格式极简：仅表格，无多余文字
-
 请开始生成报告。"""
 
     user_prompt = f"请生成2026年人社补贴政策追踪报告（西南四省），政策发布日期为2026年1月1日之后，截止当前日期（{today}）仍未过期的政策。严格按照固定格式输出。"
@@ -217,84 +210,101 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息（带敏感词清洗）"""
+    """发送飞书富文本消息（带敏感词清洗，自动分批）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return
 
-    content_elements = []
+    MAX_PER_BATCH = 20
+    total_rows = len(rows)
+    batch_count = (total_rows + MAX_PER_BATCH - 1) // MAX_PER_BATCH
 
-    title_text = f"📋 2026年人社补贴政策追踪（{region}）"
-    title_text = clean_text_for_audit(title_text)
-    content_elements.append([
-        {"tag": "text", "text": title_text + "\n\n"}
-    ])
+    for batch_idx in range(batch_count):
+        start = batch_idx * MAX_PER_BATCH
+        end = min(start + MAX_PER_BATCH, total_rows)
+        batch_rows = rows[start:end]
 
-    policy_count = 0
-    for row in rows:
-        if len(row) < 7:
-            continue
-        province = row[0]
-        city = row[1]
-        policy_name_raw = row[2]
-        deadline = row[5] if len(row) > 5 else "详见原文"
+        content_elements = []
 
-        display_name, link_url = extract_link(policy_name_raw)
-
-        # 清洗敏感词
-        province = clean_text_for_audit(province)
-        city = clean_text_for_audit(city)
-        display_name = clean_text_for_audit(display_name)
-        deadline = clean_text_for_audit(deadline)
-
-        line_parts = []
-        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
-
-        if link_url:
-            line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
-        else:
-            line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
-
-        line_parts.append({"tag": "text", "text": f"\n⏰ {deadline}"})
-
-        content_elements.append(line_parts)
-        policy_count += 1
-
+        title_text = f"📋 2026年人社补贴政策追踪（{region}）"
+        if batch_count > 1:
+            title_text += f" ({batch_idx + 1}/{batch_count})"
+        title_text = clean_text_for_audit(title_text)
         content_elements.append([
-            {"tag": "text", "text": "\n─────────────────────\n"}
+            {"tag": "text", "text": title_text + "\n\n"}
         ])
 
-    footer_text = f"\n📊 共 {len(rows)} 条政策"
-    footer_text = clean_text_for_audit(footer_text)
-    content_elements.append([
-        {"tag": "text", "text": footer_text}
-    ])
+        policy_count = 0
+        for row in batch_rows:
+            if len(row) < 7:
+                continue
+            province = row[0]
+            city = row[1]
+            policy_name_raw = row[2]
+            deadline = row[5] if len(row) > 5 else "详见原文"
 
-    send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
+            display_name, link_url = extract_link(policy_name_raw)
 
-    payload = {
-        "receive_id": receive_id,
-        "msg_type": "post",
-        "content": json.dumps({
-            "post": {
-                "zh_cn": {
-                    "title": f"2026年人社补贴政策追踪（{region}）",
-                    "content": content_elements
+            province = clean_text_for_audit(province)
+            city = clean_text_for_audit(city)
+            display_name = clean_text_for_audit(display_name)
+            deadline = clean_text_for_audit(deadline)
+
+            line_parts = []
+            line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
+
+            if link_url:
+                line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
+            else:
+                line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
+
+            line_parts.append({"tag": "text", "text": f"\n⏰ {deadline}"})
+
+            content_elements.append(line_parts)
+            policy_count += 1
+
+            content_elements.append([
+                {"tag": "text", "text": "\n─────────────────────\n"}
+            ])
+
+        footer_text = f"\n📊 共 {total_rows} 条政策，当前展示第 {start + 1}-{end} 条"
+        if batch_count > 1:
+            footer_text += f"（第 {batch_idx + 1}/{batch_count} 部分）"
+        footer_text = clean_text_for_audit(footer_text)
+        content_elements.append([
+            {"tag": "text", "text": footer_text}
+        ])
+
+        send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "receive_id": receive_id,
+            "msg_type": "post",
+            "content": json.dumps({
+                "post": {
+                    "zh_cn": {
+                        "title": f"2026年人社补贴政策追踪（{region}）",
+                        "content": content_elements
+                    }
                 }
-            }
-        })
-    }
+            })
+        }
 
-    resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
-    if resp.status_code != 200:
-        print(f"  ❌ 发送消息失败: {resp.text}")
-        resp.raise_for_status()
+        resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
+        if resp.status_code != 200:
+            print(f"  ❌ 第 {batch_idx + 1} 批发送失败: {resp.text}")
+            resp.raise_for_status()
+        print(f"  ✅ 第 {batch_idx + 1}/{batch_count} 批发送成功，共 {policy_count} 条政策")
 
-    print(f"  ✅ 富文本消息发送成功，共 {policy_count} 条政策")
+        # 批次间延迟，避免频率限制
+        if batch_idx < batch_count - 1:
+            time.sleep(1)
+
+    print(f"  ✅ 全部 {total_rows} 条政策发送完成")
 
 
 def main():
@@ -319,7 +329,7 @@ def main():
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
-    print("\n4. 发送富文本消息（已清洗敏感词）...")
+    print("\n4. 发送富文本消息（已清洗敏感词，自动分批）...")
     send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows, "西南四省")
 
     print("\n✅ 政策追踪报告发送完成！")
