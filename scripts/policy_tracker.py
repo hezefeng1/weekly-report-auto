@@ -11,17 +11,35 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-def clean_text(text, max_len=200):
+def clean_text(text):
     if not text:
         return "无"
     cleaned = str(text)
-    # 移除可能导致飞书报错的所有特殊字符
-    # 只保留中文、英文、数字、空格、常用标点
-    cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s\.\-\:：（）()]', '', cleaned)
+    # 替换所有特殊符号
+    cleaned = cleaned.replace("≤", "<=")
+    cleaned = cleaned.replace("≥", ">=")
+    cleaned = cleaned.replace("×", "*")
+    cleaned = cleaned.replace("%", "%%")
+    cleaned = cleaned.replace("、", ",")
+    cleaned = cleaned.replace("·", ".")
+    # 删除多余空格
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    if len(cleaned) > max_len:
-        cleaned = cleaned[:max_len] + "…"
     return cleaned if cleaned else "无"
+
+def clean_url(url):
+    if not url:
+        return ""
+    # 提取域名 + 路径，移除中文字符
+    try:
+        # 如果URL包含中文，直接替换为简单URL
+        if re.search(r'[\u4e00-\u9fff]', url):
+            # 提取域名
+            domain_match = re.match(r'(https?://[^/]+)', url)
+            if domain_match:
+                return domain_match.group(1) + "/policy"
+        return url
+    except:
+        return url
 
 def generate_policy_report():
     today = datetime.now().strftime("%Y年%m月%d日")
@@ -75,7 +93,7 @@ def send_post_message(access_token, receive_id, rows):
 
     for province, province_rows in groups.items():
         total = len(province_rows)
-        MAX_PER_BATCH = 8
+        MAX_PER_BATCH = 5
         for start in range(0, total, MAX_PER_BATCH):
             batch = province_rows[start:start + MAX_PER_BATCH]
             batch_num = start // MAX_PER_BATCH + 1
@@ -95,12 +113,13 @@ def send_post_message(access_token, receive_id, rows):
                 name, url = extract_link(policy_raw)
                 _, link_from_raw = extract_link(link_raw)
                 final_url = link_from_raw if link_from_raw else url
+                final_url = clean_url(final_url)
 
-                city = clean_text(city_raw, 20)
-                name = clean_text(name, 60)
-                condition = clean_text(condition_raw, 80)
-                subsidy = clean_text(subsidy_raw, 60)
-                deadline = clean_text(deadline_raw, 30) if deadline_raw else "详见原文"
+                city = clean_text(city_raw)
+                name = clean_text(name)
+                condition = clean_text(condition_raw)
+                subsidy = clean_text(subsidy_raw)
+                deadline = clean_text(deadline_raw) if deadline_raw else "详见原文"
 
                 line = f"📍 {city}  ⏰ {deadline}  📄 {name}  📌 {condition}  💰 {subsidy}"
                 if final_url:
