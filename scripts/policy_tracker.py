@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-人社补贴政策追踪（西南四省）- 简化富文本版本
-每条政策只显示：城市、截止日期、政策名称、链接
-不显示条件和补贴，避免复杂字符导致报错
+人社补贴政策追踪 - 测试版
+分阶段发送，定位飞书 230001 错误根因
 """
 import os
 import sys
 import requests
 import json
-import re
 import time
-from datetime import datetime
 from common.feishu import get_tenant_access_token
 
-REQUIRED_ENV = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "RECEIVE_OPEN_ID_POLICY", "DEEPSEEK_API_KEY"]
+REQUIRED_ENV = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "RECEIVE_OPEN_ID_POLICY"]
 missing = [e for e in REQUIRED_ENV if not os.environ.get(e)]
 if missing:
     print(f"❌ 缺少环境变量: {', '.join(missing)}")
@@ -23,178 +20,100 @@ if missing:
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
 FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-def clean_text(text, max_len=300):
-    if not text:
-        return "无"
-    cleaned = str(text)
-    for old, new in [("人力社", "***"), ("卜帖", "***"), ("贴 补", "***"), ("发放", "***")]:
-        cleaned = cleaned.replace(old, new)
-    cleaned = cleaned.replace("|", "｜")
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-    if len(cleaned) > max_len:
-        cleaned = cleaned[:max_len] + "…"
-    return cleaned if cleaned else "无"
-
-def sanitize_url(url):
-    if not url:
-        return ""
-    try:
-        from urllib.parse import urlparse, urlunparse
-        parsed = urlparse(url)
-        path = parsed.path
-        if re.search(r'[\u4e00-\u9fff]', path):
-            if path.endswith('.html'):
-                path = re.sub(r'/([^/]*?)([\u4e00-\u9fff]+[^/]*\.html)$', r'/policy.html', path)
-            elif path.endswith('.htm'):
-                path = re.sub(r'/([^/]*?)([\u4e00-\u9fff]+[^/]*\.htm)$', r'/policy.htm', path)
-            else:
-                path = re.sub(r'/([^/]*?)([\u4e00-\u9fff]+[^/]*)$', r'/policy', path)
-            path = re.sub(r'/+', '/', path)
-        return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, parsed.query, parsed.fragment))
-    except:
-        return url
-
-def generate_policy_report():
-    today = datetime.now().strftime("%Y年%m月%d日")
-    system_prompt = """你是人社政策情报分析AI。搜索2026年1月1日之后新发布的企业补贴政策，覆盖四川省、重庆市、云南省、贵州省，只输出一个Markdown表格，表头：省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 开放申请及截止日期 | 政策原文链接。政策名称列用[名称](URL)格式。只输出表格，不要其他内容。"""
-    user_prompt = f"生成2026年人社补贴政策追踪报告（西南四省），政策发布日期2026年1月1日之后，截止当前日期（{today}）仍未过期。"
-    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+def send_post(content_2d, title="测试消息"):
+    """发送富文本消息，返回 (成功, 响应内容)"""
+    post_content = {"post": {"zh_cn": {"title": title, "content": content_2d}}}
     payload = {
-        "model": "deepseek-chat",
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        "temperature": 0.3,
-        "stream": False
+        "receive_id": RECEIVE_OPEN_ID_POLICY,
+        "msg_type": "post",
+        "content": json.dumps(post_content, ensure_ascii=False)
     }
-    print("  📡 正在联网搜索...")
-    resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    print(f"  ✅ 生成完成，共 {len(content)} 字符")
-    return content
 
-def parse_markdown_table_to_list(markdown_text):
-    lines = markdown_text.strip().split('\n')
-    if len(lines) < 2:
-        return None
-    data_lines = [line for line in lines if '---' not in line]
-    if len(data_lines) < 2:
-        return None
-    rows = []
-    for line in data_lines[1:]:
-        cells = [c.strip() for c in line.split('|') if c.strip()]
-        if cells:
-            rows.append(cells)
-    return rows
+    url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+    token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-def extract_link(text):
-    match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
-    if match:
-        return match.group(1), match.group(2)
-    return text, None
-
-def send_post_message(access_token, receive_id, rows):
-    if not receive_id:
-        print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
-        return
-
-    groups = {}
-    for row in rows:
-        if len(row) < 7:
-            continue
-        prov = row[0]
-        groups.setdefault(prov, []).append(row)
-
-    for province, province_rows in groups.items():
-        total = len(province_rows)
-        MAX_PER_BATCH = 10
-        for start in range(0, total, MAX_PER_BATCH):
-            batch = province_rows[start:start + MAX_PER_BATCH]
-            batch_num = start // MAX_PER_BATCH + 1
-            total_batches = (total + MAX_PER_BATCH - 1) // MAX_PER_BATCH
-
-            content_2d = []
-
-            title = f"2026年人社补贴政策追踪 · {province}"
-            if total_batches > 1:
-                title += f"（{batch_num}/{total_batches}）"
-            content_2d.append([{"tag": "text", "text": clean_text(title)}])
-            content_2d.append([{"tag": "text", "text": "─────────────────────"}])
-
-            for idx, row in enumerate(batch):
-                province_raw, city_raw, policy_raw, condition_raw, subsidy_raw, deadline_raw, link_raw = row[:7]
-
-                name, url = extract_link(policy_raw)
-                _, link_from_raw = extract_link(link_raw)
-                final_url = link_from_raw if link_from_raw else url
-                final_url = sanitize_url(final_url) if final_url else ""
-
-                city = clean_text(city_raw, 20)
-                name = clean_text(name, 60)
-                deadline = clean_text(deadline_raw, 30) if deadline_raw else "详见原文"
-
-                # ★★★ 只显示核心字段，不显示条件和补贴 ★★★
-                line = f"📍 {city}  ⏰ {deadline}  📄 {name}"
-                if final_url:
-                    line += f"  🔗 {final_url}"
-
-                content_2d.append([{"tag": "text", "text": line}])
-                if idx < len(batch) - 1:
-                    content_2d.append([{"tag": "text", "text": "─────────────────────"}])
-
-            footer = f"📊 本页 {len(batch)} 条，{province} 共 {total} 条"
-            if total_batches > 1:
-                footer += f"（第 {batch_num}/{total_batches} 部分）"
-            content_2d.append([{"tag": "text", "text": clean_text(footer)}])
-
-            post_content = {"post": {"zh_cn": {"title": f"人社补贴政策 · {province}", "content": content_2d}}}
-            payload = {
-                "receive_id": receive_id,
-                "msg_type": "post",
-                "content": json.dumps(post_content, ensure_ascii=False)
-            }
-
-            url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
-            headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
-            if resp.status_code != 200:
-                print(f"  ❌ {province} 第 {batch_num} 批发送失败: {resp.text}")
-                resp.raise_for_status()
-            else:
-                print(f"  ✅ {province} 第 {batch_num}/{total_batches} 批发送成功（{len(batch)} 条）")
-            time.sleep(1.5)
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    return resp.status_code == 200, resp.text
 
 def main():
-    print("=" * 50)
-    print("📋 人社补贴政策追踪（西南四省）")
-    print("=" * 50)
+    print("=" * 60)
+    print("📋 飞书消息发送测试 - 分阶段定位")
+    print("=" * 60)
 
-    print("\n1. 生成政策追踪报告...")
-    md_content = generate_policy_report()
-    print("=== DeepSeek 返回的完整 Markdown 内容 ===")
-    print(md_content)
-    print("=== 内容结束 ===")
+    # ========== 阶段1：纯文本测试 ==========
+    print("\n【阶段1】发送纯文本 'Hello, 测试消息'...")
+    ok, resp = send_post([
+        [{"tag": "text", "text": "Hello, 测试消息"}]
+    ], "阶段1测试")
+    print(f"  结果: {'✅ 成功' if ok else '❌ 失败'}")
+    print(f"  响应: {resp}")
+    if not ok:
+        print("  ⚠️ 最基础的测试就失败了，说明问题在 token 或接收人配置")
+        return
 
-    print("\n2. 解析 Markdown 表格...")
-    rows = parse_markdown_table_to_list(md_content)
-    if not rows:
-        print("  ❌ 未能解析出表格数据")
-        sys.exit(1)
-    print(f"  ✅ 解析成功，共 {len(rows)} 条政策")
+    # ========== 阶段2：标题 + 1条政策（仅城市和名称，无URL） ==========
+    print("\n【阶段2】发送标题 + 1条政策（仅城市 + 名称）...")
+    ok, resp = send_post([
+        [{"tag": "text", "text": "📋 政策测试"}],
+        [{"tag": "text", "text": "─────────────────────"}],
+        [{"tag": "text", "text": "📍 成都市  📄 稳岗扩岗专项补贴"}]
+    ], "阶段2测试")
+    print(f"  结果: {'✅ 成功' if ok else '❌ 失败'}")
+    print(f"  响应: {resp}")
+    if not ok:
+        print("  ⚠️ 问题在标题或分隔线格式")
+        return
 
-    print("\n3. 获取飞书 token...")
-    token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
-    if not token:
-        print("  ❌ 获取 token 失败")
-        sys.exit(1)
-    print("  ✅ token 获取成功")
+    # ========== 阶段3：标题 + 1条政策（城市 + 名称 + 纯文本URL） ==========
+    print("\n【阶段3】发送城市 + 名称 + 纯文本 URL...")
+    ok, resp = send_post([
+        [{"tag": "text", "text": "📋 政策测试"}],
+        [{"tag": "text", "text": "─────────────────────"}],
+        [{"tag": "text", "text": "📍 成都市  📄 稳岗扩岗专项补贴  🔗 https://cdhrss.chengdu.gov.cn/2026wggx"}]
+    ], "阶段3测试")
+    print(f"  结果: {'✅ 成功' if ok else '❌ 失败'}")
+    print(f"  响应: {resp}")
+    if not ok:
+        print("  ⚠️ 问题在纯文本 URL")
+        return
 
-    print("\n4. 发送简化富文本消息...")
-    send_post_message(token, RECEIVE_OPEN_ID_POLICY, rows)
+    # ========== 阶段4：阶段3 + 截止日期 ==========
+    print("\n【阶段4】阶段3 + 截止日期...")
+    ok, resp = send_post([
+        [{"tag": "text", "text": "📋 政策测试"}],
+        [{"tag": "text", "text": "─────────────────────"}],
+        [{"tag": "text", "text": "📍 成都市  ⏰ 2026-07-01至2026-09-30  📄 稳岗扩岗专项补贴  🔗 https://cdhrss.chengdu.gov.cn/2026wggx"}]
+    ], "阶段4测试")
+    print(f"  结果: {'✅ 成功' if ok else '❌ 失败'}")
+    print(f"  响应: {resp}")
+    if not ok:
+        print("  ⚠️ 问题在截止日期（包含连字符 -）")
+        return
 
-    print("\n✅ 政策追踪报告发送完成！")
+    # ========== 阶段5：真实完整数据（含条件和补贴） ==========
+    print("\n【阶段5】发送真实完整数据（含条件和补贴）...")
+    ok, resp = send_post([
+        [{"tag": "text", "text": "📋 政策测试"}],
+        [{"tag": "text", "text": "─────────────────────"}],
+        [{"tag": "text", "text": "📍 成都市  ⏰ 2026-07-01至2026-09-30  📄 稳岗扩岗专项补贴  📌 企业2026年1-6月社保参保人数不低于2025年同期，且未裁员或裁员率≤5.5%  💰 按2026年6月参保人数×500元/人，最高50万元  🔗 https://cdhrss.chengdu.gov.cn/2026wggx"}]
+    ], "阶段5测试")
+    print(f"  结果: {'✅ 成功' if ok else '❌ 失败'}")
+    print(f"  响应: {resp}")
+    if not ok:
+        print("  ⚠️ 问题在条件或补贴字段（含 ≤、×、% 等特殊字符）")
+        return
+
+    # ========== 结论 ==========
+    print("\n" + "=" * 60)
+    if ok:
+        print("✅ 所有阶段全部成功！说明代码没问题，之前失败是因为具体数据触发了飞书限制。")
+        print("   现在可以逐步排查真实数据中的特殊字符。")
+    else:
+        print("❌ 某个阶段失败了，根据上面的输出定位具体是哪个阶段。")
+        print("   重点关注：连字符(-)、百分号(%)、小于等于(≤)、乘号(×)等特殊字符。")
+    print("=" * 60)
 
 if __name__ == "__main__":
     main()
