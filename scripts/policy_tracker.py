@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-人社补贴政策追踪（西南四省）- 最终必成功版
-解决所有已知报错：
-1. URL中文字符 → 替换为 policy
-2. 内容中的 | 竖线 → 替换为 ｜（全角）
-3. 每批最多10条
-4. 每条政策只用一个 text 标签
+人社补贴政策追踪（西南四省）- 简化富文本版本
+每条政策只显示：城市、截止日期、政策名称、链接
+不显示条件和补贴，避免复杂字符导致报错
 """
 import os
 import sys
@@ -15,10 +12,8 @@ import json
 import re
 import time
 from datetime import datetime
-from urllib.parse import urlparse, urlunparse
 from common.feishu import get_tenant_access_token
 
-# ========== 环境变量检查 ==========
 REQUIRED_ENV = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "RECEIVE_OPEN_ID_POLICY", "DEEPSEEK_API_KEY"]
 missing = [e for e in REQUIRED_ENV if not os.environ.get(e)]
 if missing:
@@ -30,26 +25,23 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-# ========== 敏感词清洗 ==========
 def clean_text(text, max_len=300):
     if not text:
         return "无"
     cleaned = str(text)
-    # 敏感词替换
-    for old, new in [("人力社", "***"), ("卜帖", "***"), ("贴 补", "***"), ("发放", "***"), ("裁员名单", "***")]:
+    for old, new in [("人力社", "***"), ("卜帖", "***"), ("贴 补", "***"), ("发放", "***")]:
         cleaned = cleaned.replace(old, new)
-    # ★★★ 关键：将 | 替换为全角 ｜，避免飞书误解析 ★★★
     cleaned = cleaned.replace("|", "｜")
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     if len(cleaned) > max_len:
         cleaned = cleaned[:max_len] + "…"
     return cleaned if cleaned else "无"
 
-# ========== URL 清洗，移除中文字符 ==========
 def sanitize_url(url):
     if not url:
         return ""
     try:
+        from urllib.parse import urlparse, urlunparse
         parsed = urlparse(url)
         path = parsed.path
         if re.search(r'[\u4e00-\u9fff]', path):
@@ -75,7 +67,7 @@ def generate_policy_report():
         "temperature": 0.3,
         "stream": False
     }
-    print("  📡 正在联网搜索西南四省人社补贴政策...")
+    print("  📡 正在联网搜索...")
     resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
@@ -102,7 +94,7 @@ def extract_link(text):
         return match.group(1), match.group(2)
     return text, None
 
-def send_rich_text_message(access_token, receive_id, rows):
+def send_post_message(access_token, receive_id, rows):
     if not receive_id:
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
@@ -138,13 +130,12 @@ def send_rich_text_message(access_token, receive_id, rows):
                 final_url = link_from_raw if link_from_raw else url
                 final_url = sanitize_url(final_url) if final_url else ""
 
-                name = clean_text(name, 60)
                 city = clean_text(city_raw, 20)
-                condition = clean_text(condition_raw, 80)
-                subsidy = clean_text(subsidy_raw, 60)
+                name = clean_text(name, 60)
                 deadline = clean_text(deadline_raw, 30) if deadline_raw else "详见原文"
 
-                line = f"📍 {city}  ⏰ {deadline}  📄 {name}  📌 {condition}  💰 {subsidy}"
+                # ★★★ 只显示核心字段，不显示条件和补贴 ★★★
+                line = f"📍 {city}  ⏰ {deadline}  📄 {name}"
                 if final_url:
                     line += f"  🔗 {final_url}"
 
@@ -180,12 +171,6 @@ def main():
     print("📋 人社补贴政策追踪（西南四省）")
     print("=" * 50)
 
-    print("\n🔍 检查环境变量...")
-    print(f"  FEISHU_APP_ID: {'已设置' if FEISHU_APP_ID else '❌ 未设置'}")
-    print(f"  FEISHU_APP_SECRET: {'已设置' if FEISHU_APP_SECRET else '❌ 未设置'}")
-    print(f"  RECEIVE_OPEN_ID_POLICY: {'已设置' if RECEIVE_OPEN_ID_POLICY else '❌ 未设置'}")
-    print(f"  DEEPSEEK_API_KEY: {'已设置' if DEEPSEEK_API_KEY else '❌ 未设置'}")
-
     print("\n1. 生成政策追踪报告...")
     md_content = generate_policy_report()
     print("=== DeepSeek 返回的完整 Markdown 内容 ===")
@@ -197,7 +182,7 @@ def main():
     if not rows:
         print("  ❌ 未能解析出表格数据")
         sys.exit(1)
-    print(f"  ✅ 解析成功，表头: 7 列，数据: {len(rows)} 行")
+    print(f"  ✅ 解析成功，共 {len(rows)} 条政策")
 
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
@@ -206,8 +191,8 @@ def main():
         sys.exit(1)
     print("  ✅ token 获取成功")
 
-    print("\n4. 发送富文本消息（每批最多10条，URL自动清洗，竖线替换）...")
-    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows)
+    print("\n4. 发送简化富文本消息...")
+    send_post_message(token, RECEIVE_OPEN_ID_POLICY, rows)
 
     print("\n✅ 政策追踪报告发送完成！")
 
