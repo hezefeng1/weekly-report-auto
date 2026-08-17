@@ -34,7 +34,7 @@ def send_image_message(access_token, receive_id, image_key):
     return resp.json()
 
 
-# ========== 云文档相关 ==========
+# ========== 云文档相关（表格 block 方式） ==========
 
 def create_doc(access_token, title):
     create_url = "https://open.feishu.cn/open-apis/docx/v1/documents"
@@ -46,75 +46,124 @@ def create_doc(access_token, title):
     return doc_id
 
 
-def _clean_content_for_doc(content):
-    """清洗内容，使其符合飞书云文档 API 的要求"""
-    lines = content.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        # 1. 移除行首尾空白
-        line = line.strip()
-        if not line:
+def _create_text_block(content, is_bold=False):
+    """创建文本块（block_type: 3）"""
+    element = {"text_run": {"content": content}}
+    if is_bold:
+        element["text_run"]["text_element_style"] = {"bold": True}
+    return {
+        "block_type": 3,
+        "text": {
+            "elements": [element]
+        }
+    }
+
+
+def update_doc_with_table(access_token, doc_id, rows_data):
+    """
+    在云文档中创建真正的表格（block_type: 11）
+    rows_data: 二维数组，第一行作为表头
+    """
+    root_block_id = doc_id
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+
+    if not rows_data or len(rows_data) == 0:
+        # 无数据，写入提示
+        return update_doc_content(access_token, doc_id, "暂无政策数据")
+
+    col_count = len(rows_data[0])
+    row_count = len(rows_data)
+
+    # 1. 创建表格
+    table_block = {
+        "block_type": 11,
+        "table": {
+            "property": {
+                "column_size": col_count,
+                "row_size": row_count
+            }
+        }
+    }
+    resp = requests.post(
+        f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children",
+        headers=headers,
+        json={"children": [table_block]},
+        timeout=60
+    )
+    if resp.status_code != 200:
+        print(f"  ❌ 创建表格失败: {resp.text}")
+        resp.raise_for_status()
+    table_id = resp.json()["data"]["children"][0]["block_id"]
+    print(f"  📊 表格创建成功，列数: {col_count}，行数: {row_count}")
+
+    # 2. 逐行创建
+    for row_idx, row in enumerate(rows_data):
+        # 2.1 创建行
+        row_block = {"block_type": 12, "table_row": {}}
+        resp = requests.post(
+            f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{table_id}/children",
+            headers=headers,
+            json={"children": [row_block]},
+            timeout=60
+        )
+        if resp.status_code != 200:
+            print(f"  ⚠️ 第 {row_idx+1} 行创建失败")
             continue
-        # 2. 将连续的多个空格替换为单个空格
-        line = re.sub(r'[ \t]+', ' ', line)
-        # 3. 移除特殊字符（保留中文、英文、数字、常用标点）
-        line = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s\.\,\-\(\)\:\/\%\~\=\+\_\&\?\!\@\#\$]', '', line)
-        # 4. 截断超长行
-        if len(line) > 800:
-            line = line[:800] + '...'
-        cleaned_lines.append(line)
-    return '\n'.join(cleaned_lines)
+        row_id = resp.json()["data"]["children"][0]["block_id"]
+
+        # 2.2 为该行创建单元格
+        for col_idx, cell_data in enumerate(row):
+            # 创建单元格
+            cell_block = {"block_type": 13, "table_cell": {}}
+            resp = requests.post(
+                f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{row_id}/children",
+                headers=headers,
+                json={"children": [cell_block]},
+                timeout=60
+            )
+            if resp.status_code != 200:
+                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列单元格创建失败")
+                continue
+            cell_id = resp.json()["data"]["children"][0]["block_id"]
+
+            # 写入单元格内容
+            is_header = (row_idx == 0)
+            # 清理链接格式，只保留 URL 或纯文本
+            clean_text = cell_data
+            # 如果是链接格式 [文本](URL)，提取文本
+            link_match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', cell_data)
+            if link_match:
+                clean_text = link_match.group(1)  # 只保留显示文本
+
+            text_block = _create_text_block(clean_text, is_bold=is_header)
+            resp = requests.post(
+                f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{cell_id}/children",
+                headers=headers,
+                json={"children": [text_block]},
+                timeout=60
+            )
+            if resp.status_code != 200:
+                print(f"    ⚠️ 第 {row_idx+1} 行第 {col_idx+1} 列内容写入失败")
+
+        if (row_idx + 1) % 5 == 0:
+            print(f"  ✅ 已完成 {row_idx + 1}/{row_count} 行")
+
+    print(f"  ✅ 表格写入完成，共 {row_count} 行")
+    return table_id
 
 
 def update_doc_content(access_token, doc_id, content):
-    """
-    向云文档写入内容（清洗后写入）
-    """
-    # 清洗内容
-    cleaned_content = _clean_content_for_doc(content)
-    if not cleaned_content:
-        cleaned_content = "暂无政策数据"
-
+    """向云文档写入纯文本（备用方案）"""
     root_block_id = doc_id
     update_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
-    # 按行拆分，每段不超过 1500 字符
-    lines = cleaned_content.split('\n')
-    chunks = []
-    current_chunk = ""
-    for line in lines:
-        # 每行本身可能很长（表格行），如果单行超过 800 字符已经截断了
-        if len(current_chunk) + len(line) + 1 > 1500:
-            chunks.append(current_chunk)
-            current_chunk = ""
-        current_chunk += line + "\n"
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    # 如果没有任何内容，写入占位符
-    if not chunks:
-        chunks = ["暂无政策数据"]
-
-    for idx, chunk in enumerate(chunks):
-        block = {
-            "block_type": 3,
-            "text": {
-                "elements": [
-                    {"text_run": {"content": chunk}}
-                ]
-            }
-        }
-        resp = requests.post(update_url, headers=headers, json={"children": [block]}, timeout=60)
-        if resp.status_code == 200:
-            print(f"  ✅ 第 {idx+1} 段写入成功")
-        else:
-            print(f"  ⚠️ 第 {idx+1} 段写入失败: {resp.text}")
-
-    print(f"  ✅ 文档内容写入完成，共 {len(chunks)} 段")
+    text_block = _create_text_block(content)
+    resp = requests.post(update_url, headers=headers, json={"children": [text_block]}, timeout=60)
+    if resp.status_code == 200:
+        print(f"  ✅ 文档内容写入完成")
+    else:
+        print(f"  ⚠️ 写入失败: {resp.text}")
 
 
 def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省"):
@@ -126,10 +175,7 @@ def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省
     message_text = f"📋 **2026年人社补贴政策追踪（{region}）**\n\n政策追踪报告已生成，点击查看：\n{doc_url}"
 
     send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     payload = {
         "receive_id": receive_id,
         "msg_type": "text",
