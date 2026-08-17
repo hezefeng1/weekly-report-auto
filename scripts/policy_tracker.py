@@ -1,174 +1,163 @@
 import os
 import requests
 import json
+import re
+import time
+from datetime import datetime
+from common.feishu import get_tenant_access_token
 
-# ====== 从环境变量读取旧应用信息 ======
-APP_ID = os.environ.get("FEISHU_APP_ID")
-APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
-OPEN_ID = os.environ.get("RECEIVE_OPEN_ID_POLICY")
+FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
+FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
+RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-if not APP_ID or not APP_SECRET or not OPEN_ID:
-    print("❌ 请设置环境变量")
-    exit(1)
+def clean_text(text, max_len=200):
+    if not text:
+        return "无"
+    cleaned = str(text)
+    # 移除可能导致飞书报错的所有特殊字符
+    # 只保留中文、英文、数字、空格、常用标点
+    cleaned = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s\.\-\:：（）()]', '', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len] + "…"
+    return cleaned if cleaned else "无"
 
-print("=" * 60)
-print("旧应用富文本逐步测试（从最简单开始）")
-print("=" * 60)
+def generate_policy_report():
+    today = datetime.now().strftime("%Y年%m月%d日")
+    system_prompt = """你是人社政策情报分析AI。搜索2026年1月1日之后新发布的企业补贴政策，覆盖四川省、重庆市、云南省、贵州省，只输出一个Markdown表格，表头：省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 开放申请及截止日期 | 政策原文链接。政策名称列用[名称](URL)格式。只输出表格，不要其他内容。"""
+    user_prompt = f"生成2026年人社补贴政策追踪报告（西南四省），政策发布日期2026年1月1日之后，截止当前日期（{today}）仍未过期。"
+    headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        "temperature": 0.3,
+        "stream": False
+    }
+    print("  📡 正在联网搜索...")
+    resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    print(f"  ✅ 生成完成，共 {len(content)} 字符")
+    return content
 
-# 获取 token
-resp = requests.post(
-    "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
-    json={"app_id": APP_ID, "app_secret": APP_SECRET},
-    timeout=10
-)
-data = resp.json()
-token = data.get("tenant_access_token")
-if not token:
-    print(f"❌ 获取 token 失败: {data}")
-    exit(1)
-print(f"✅ token: {token[:20]}...\n")
+def parse_markdown_table_to_list(markdown_text):
+    lines = markdown_text.strip().split('\n')
+    if len(lines) < 2:
+        return None
+    data_lines = [line for line in lines if '---' not in line]
+    if len(data_lines) < 2:
+        return None
+    rows = []
+    for line in data_lines[1:]:
+        cells = [c.strip() for c in line.split('|') if c.strip()]
+        if cells:
+            rows.append(cells)
+    return rows
 
-# ====== 测试1：最简单富文本（只写一句话） ======
-print("【测试1】最简单的富文本（一句话）")
-payload1 = {
-    "receive_id": OPEN_ID,
-    "msg_type": "post",
-    "content": json.dumps({
-        "post": {
-            "zh_cn": {
-                "title": "测试1",
-                "content": [[{"tag": "text", "text": "Hello"}]]
+def extract_link(text):
+    match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
+    if match:
+        return match.group(1), match.group(2)
+    return text, None
+
+def send_post_message(access_token, receive_id, rows):
+    if not receive_id:
+        print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
+        return
+
+    groups = {}
+    for row in rows:
+        if len(row) < 7:
+            continue
+        prov = row[0]
+        groups.setdefault(prov, []).append(row)
+
+    for province, province_rows in groups.items():
+        total = len(province_rows)
+        MAX_PER_BATCH = 8
+        for start in range(0, total, MAX_PER_BATCH):
+            batch = province_rows[start:start + MAX_PER_BATCH]
+            batch_num = start // MAX_PER_BATCH + 1
+            total_batches = (total + MAX_PER_BATCH - 1) // MAX_PER_BATCH
+
+            content_2d = []
+
+            title = f"2026年人社补贴政策追踪 · {province}"
+            if total_batches > 1:
+                title += f"（{batch_num}/{total_batches}）"
+            content_2d.append([{"tag": "text", "text": title}])
+            content_2d.append([{"tag": "text", "text": "─────────────────────"}])
+
+            for row in batch:
+                province_raw, city_raw, policy_raw, condition_raw, subsidy_raw, deadline_raw, link_raw = row[:7]
+
+                name, url = extract_link(policy_raw)
+                _, link_from_raw = extract_link(link_raw)
+                final_url = link_from_raw if link_from_raw else url
+
+                city = clean_text(city_raw, 20)
+                name = clean_text(name, 60)
+                condition = clean_text(condition_raw, 80)
+                subsidy = clean_text(subsidy_raw, 60)
+                deadline = clean_text(deadline_raw, 30) if deadline_raw else "详见原文"
+
+                line = f"📍 {city}  ⏰ {deadline}  📄 {name}  📌 {condition}  💰 {subsidy}"
+                if final_url:
+                    line += f"  🔗 {final_url}"
+
+                content_2d.append([{"tag": "text", "text": line}])
+                content_2d.append([{"tag": "text", "text": "─────────────────────"}])
+
+            footer = f"📊 本页 {len(batch)} 条，{province} 共 {total} 条"
+            if total_batches > 1:
+                footer += f"（第 {batch_num}/{total_batches} 部分）"
+            content_2d.append([{"tag": "text", "text": footer}])
+
+            post_content = {"post": {"zh_cn": {"title": f"人社补贴政策 · {province}", "content": content_2d}}}
+            payload = {
+                "receive_id": receive_id,
+                "msg_type": "post",
+                "content": json.dumps(post_content, ensure_ascii=False)
             }
-        }
-    }, ensure_ascii=False)
-}
-resp1 = requests.post(
-    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
-    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    json=payload1,
-    timeout=10
-)
-print(f"状态码: {resp1.status_code}")
-print(f"响应: {resp1.text}\n")
 
-if resp1.status_code != 200:
-    print("❌ 最简单的富文本就失败了，说明旧应用富文本通道有问题")
-    exit(1)
+            url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+            headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
-# ====== 测试2：加城市 + 截止日期 ======
-print("【测试2】城市 + 截止日期（无URL、无条件和补贴）")
-payload2 = {
-    "receive_id": OPEN_ID,
-    "msg_type": "post",
-    "content": json.dumps({
-        "post": {
-            "zh_cn": {
-                "title": "测试2",
-                "content": [
-                    [{"tag": "text", "text": "📍 成都市  ⏰ 2026-07-01至2026-09-30"}]
-                ]
-            }
-        }
-    }, ensure_ascii=False)
-}
-resp2 = requests.post(
-    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
-    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    json=payload2,
-    timeout=10
-)
-print(f"状态码: {resp2.status_code}")
-print(f"响应: {resp2.text}\n")
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            if resp.status_code != 200:
+                print(f"  ❌ {province} 第{batch_num}批发送失败: {resp.text}")
+                resp.raise_for_status()
+            else:
+                print(f"  ✅ {province} 第{batch_num}/{total_batches}批发送成功（{len(batch)}条）")
+            time.sleep(1.5)
 
-if resp2.status_code != 200:
-    print("❌ 加城市和截止日期后失败，问题在日期格式")
-    exit(1)
+def main():
+    print("=" * 50)
+    print("📋 人社补贴政策追踪（西南四省）")
+    print("=" * 50)
 
-# ====== 测试3：加政策名称（无URL） ======
-print("【测试3】城市 + 截止日期 + 政策名称（无URL）")
-payload3 = {
-    "receive_id": OPEN_ID,
-    "msg_type": "post",
-    "content": json.dumps({
-        "post": {
-            "zh_cn": {
-                "title": "测试3",
-                "content": [
-                    [{"tag": "text", "text": "📍 成都市  ⏰ 2026-07-01至2026-09-30  📄 稳岗扩岗专项补贴"}]
-                ]
-            }
-        }
-    }, ensure_ascii=False)
-}
-resp3 = requests.post(
-    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
-    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    json=payload3,
-    timeout=10
-)
-print(f"状态码: {resp3.status_code}")
-print(f"响应: {resp3.text}\n")
+    print("\n1. 生成政策追踪报告...")
+    md_content = generate_policy_report()
+    print(md_content)
 
-if resp3.status_code != 200:
-    print("❌ 加政策名称后失败，问题在政策名称文本")
-    exit(1)
+    print("\n2. 解析表格...")
+    rows = parse_markdown_table_to_list(md_content)
+    if not rows:
+        print("  ❌ 解析失败")
+        return
+    print(f"  ✅ 解析成功，共 {len(rows)} 条")
 
-# ====== 测试4：加URL（纯文本URL，不用a标签） ======
-print("【测试4】城市 + 截止日期 + 政策名称 + 纯文本URL")
-payload4 = {
-    "receive_id": OPEN_ID,
-    "msg_type": "post",
-    "content": json.dumps({
-        "post": {
-            "zh_cn": {
-                "title": "测试4",
-                "content": [
-                    [{"tag": "text", "text": "📍 成都市  ⏰ 2026-07-01至2026-09-30  📄 稳岗扩岗专项补贴  🔗 https://cdhrss.chengdu.gov.cn/2026wggx"}]
-                ]
-            }
-        }
-    }, ensure_ascii=False)
-}
-resp4 = requests.post(
-    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
-    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    json=payload4,
-    timeout=10
-)
-print(f"状态码: {resp4.status_code}")
-print(f"响应: {resp4.text}\n")
+    print("\n3. 获取飞书 token...")
+    token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
+    if not token:
+        print("  ❌ token 失败")
+        return
 
-if resp4.status_code != 200:
-    print("❌ 加URL后失败，问题在URL文本")
-    exit(1)
+    print("\n4. 发送富文本消息...")
+    send_post_message(token, RECEIVE_OPEN_ID_POLICY, rows)
 
-# ====== 测试5：加条件和补贴（完整内容） ======
-print("【测试5】完整内容（城市 + 截止日期 + 政策名称 + URL + 条件 + 补贴）")
-full_text = "📍 成都市  ⏰ 2026-07-01至2026-09-30  📄 稳岗扩岗专项补贴  📌 企业2026年1-6月社保参保人数不低于2025年同期，且未裁员或裁员率≤5.5%  💰 按2026年6月参保人数×500元/人，最高50万元  🔗 https://cdhrss.chengdu.gov.cn/2026wggx"
-payload5 = {
-    "receive_id": OPEN_ID,
-    "msg_type": "post",
-    "content": json.dumps({
-        "post": {
-            "zh_cn": {
-                "title": "测试5",
-                "content": [
-                    [{"tag": "text", "text": full_text}]
-                ]
-            }
-        }
-    }, ensure_ascii=False)
-}
-resp5 = requests.post(
-    "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
-    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    json=payload5,
-    timeout=10
-)
-print(f"状态码: {resp5.status_code}")
-print(f"响应: {resp5.text}\n")
+    print("\n✅ 完成")
 
-if resp5.status_code != 200:
-    print("❌ 加条件和补贴后失败，问题在条件或补贴字段中的特殊字符（≤、×、%等）")
-else:
-    print("✅ 所有测试通过！旧应用富文本完全正常")
+if __name__ == "__main__":
+    main()
