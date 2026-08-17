@@ -12,7 +12,7 @@ RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
 
-# ========== 敏感词屏蔽规则（完全保留你的） ==========
+# ========== 敏感词屏蔽规则（精简版） ==========
 SENSITIVE_RULES = [
     {"type": "all", "words": ["人力社", "高温补贴"]},
     {"type": "all", "words": ["国家", "高温补贴"]},
@@ -53,8 +53,8 @@ SENSITIVE_RULES = [
 ]
 
 
-def clean_text_for_audit(text):
-    """清洗文本中的敏感词，保证返回非空字符串"""
+def clean_text_for_audit(text, max_len=500):
+    """清洗敏感词，并截断过长的文本"""
     if not text:
         return "无"
     cleaned = str(text)
@@ -73,11 +73,13 @@ def clean_text_for_audit(text):
                 cleaned = cleaned.replace(w, "***")
     cleaned = re.sub(r'\s+', ' ', cleaned)
     cleaned = cleaned.strip()
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len] + "…"
     return cleaned if cleaned else "无"
 
 
 def generate_policy_report():
-    """调用 DeepSeek API 生成政策追踪报告（完整保留原 prompt）"""
+    """调用 DeepSeek API 生成政策追踪报告（保留完整 prompt）"""
     today = datetime.now().strftime("%Y年%m月%d日")
     system_prompt = """你是人社政策情报分析AI。
 
@@ -125,7 +127,7 @@ def generate_policy_report():
 | 省份 | 政策发布省份 |
 | 城市 | 适用城市（多个用顿号分隔） |
 | 政策名称 | 完整政策标题（作为链接文字） |
-| 核心申请条件 | 企业适用条件 |
+| 核心申请条件 | 企业适用条件（精简到50字以内） |
 | 补贴标准/金额 | 具体金额或比例 |
 | 开放申请及截止日期 | 格式：YYYY-MM-DD |
 | 政策原文链接 | 可点击的官方政策原文URL |
@@ -190,7 +192,8 @@ def extract_link(text):
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
     """
-    按省份分组发送飞书富文本消息（纯文本方案，不使用 a 标签）
+    按省份分组发送飞书富文本消息（纯文本方案，避免 a 标签）
+    ★ 关键：每批最多发送 10 条，防止超过 30KB 限制
     """
     if not receive_id:
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
@@ -206,7 +209,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     for province, province_rows in province_groups.items():
         total = len(province_rows)
-        MAX_PER_BATCH = 20
+        MAX_PER_BATCH = 10  # ★ 从 20 降到 10，确保不超限制
         for start in range(0, total, MAX_PER_BATCH):
             batch = province_rows[start:start + MAX_PER_BATCH]
             batch_num = start // MAX_PER_BATCH + 1
@@ -222,23 +225,39 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
             content_2d.append([{"tag": "text", "text": clean_text_for_audit(title)}])
             content_2d.append([{"tag": "text", "text": "─────────────────────"}])
 
-            # 每条政策构造一个段落，包含所有信息
+            # 每条政策构造一个段落
             for idx, row in enumerate(batch):
-                province_raw, city_raw, policy_raw, _, _, deadline_raw, link_raw = row[:7]
+                # 确保 row 至少有 7 列
+                if len(row) < 7:
+                    continue
+
+                province_raw = row[0] if len(row) > 0 else ""
+                city_raw = row[1] if len(row) > 1 else ""
+                policy_raw = row[2] if len(row) > 2 else ""
+                condition_raw = row[3] if len(row) > 3 else ""
+                subsidy_raw = row[4] if len(row) > 4 else ""
+                deadline_raw = row[5] if len(row) > 5 else ""
+                link_raw = row[6] if len(row) > 6 else ""
 
                 # 清洗
                 province_cleaned = clean_text_for_audit(province_raw)
                 city_cleaned = clean_text_for_audit(city_raw)
                 display_name, link_url = extract_link(policy_raw)
-                display_name = clean_text_for_audit(display_name) if display_name else "政策"
+                display_name = clean_text_for_audit(display_name, max_len=80) if display_name else "政策"
+                condition_cleaned = clean_text_for_audit(condition_raw, max_len=60)
+                subsidy_cleaned = clean_text_for_audit(subsidy_raw, max_len=50)
                 deadline_cleaned = clean_text_for_audit(deadline_raw) if deadline_raw else "详见原文"
 
-                # 提取链接（优先用 link_raw 中的 URL，若无则用 policy 中的）
+                # 提取链接
                 _, link_from_raw = extract_link(link_raw)
                 final_link = link_from_raw if link_from_raw else link_url
 
                 # 组装单条政策文本（所有内容放在同一个 text 标签内）
-                policy_text = f"📍 {province_cleaned}｜{city_cleaned}  ⏰ {deadline_cleaned}\n📄 {display_name}"
+                policy_text = f"📍 {province_cleaned}｜{city_cleaned}\n"
+                policy_text += f"📄 {display_name}\n"
+                policy_text += f"📌 条件：{condition_cleaned}\n"
+                policy_text += f"💰 补贴：{subsidy_cleaned}\n"
+                policy_text += f"⏰ 截止：{deadline_cleaned}"
                 if final_link:
                     policy_text += f"\n🔗 {final_link}"
 
@@ -278,7 +297,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
                 resp.raise_for_status()
             else:
                 print(f"  ✅ {province} 第 {batch_num}/{total_batches} 批发送成功（{len(batch)} 条）")
-            time.sleep(1)
+            time.sleep(1.5)  # 增加延迟，避免频率限制
 
 
 def main():
