@@ -238,7 +238,8 @@ def main():
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
     print("\n4. 发送富文本消息...")
-    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows, "西南四省")
+    # 🔥 关键修改：只发送前 15 条，避免飞书消息超长报错 230001
+    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows[:15], "西南四省")
 
     print("\n✅ 政策追踪报告发送完成！")
 
