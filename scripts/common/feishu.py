@@ -46,10 +46,35 @@ def create_doc(access_token, title):
     return doc_id
 
 
+def _clean_content_for_doc(content):
+    """清洗内容，使其符合飞书云文档 API 的要求"""
+    lines = content.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        # 1. 移除行首尾空白
+        line = line.strip()
+        if not line:
+            continue
+        # 2. 将连续的多个空格替换为单个空格
+        line = re.sub(r'[ \t]+', ' ', line)
+        # 3. 移除特殊字符（保留中文、英文、数字、常用标点）
+        line = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s\.\,\-\(\)\:\/\%\~\=\+\_\&\?\!\@\#\$]', '', line)
+        # 4. 截断超长行
+        if len(line) > 800:
+            line = line[:800] + '...'
+        cleaned_lines.append(line)
+    return '\n'.join(cleaned_lines)
+
+
 def update_doc_content(access_token, doc_id, content):
     """
-    向云文档写入内容（直接把 Markdown 作为纯文本写入）
+    向云文档写入内容（清洗后写入）
     """
+    # 清洗内容
+    cleaned_content = _clean_content_for_doc(content)
+    if not cleaned_content:
+        cleaned_content = "暂无政策数据"
+
     root_block_id = doc_id
     update_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children"
     headers = {
@@ -57,16 +82,22 @@ def update_doc_content(access_token, doc_id, content):
         "Content-Type": "application/json"
     }
 
-    lines = content.split('\n')
+    # 按行拆分，每段不超过 1500 字符
+    lines = cleaned_content.split('\n')
     chunks = []
     current_chunk = ""
     for line in lines:
-        if len(current_chunk) + len(line) + 1 > 2000:
+        # 每行本身可能很长（表格行），如果单行超过 800 字符已经截断了
+        if len(current_chunk) + len(line) + 1 > 1500:
             chunks.append(current_chunk)
             current_chunk = ""
         current_chunk += line + "\n"
     if current_chunk:
         chunks.append(current_chunk)
+
+    # 如果没有任何内容，写入占位符
+    if not chunks:
+        chunks = ["暂无政策数据"]
 
     for idx, chunk in enumerate(chunks):
         block = {
@@ -87,9 +118,6 @@ def update_doc_content(access_token, doc_id, content):
 
 
 def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省"):
-    """
-    发送飞书云文档链接消息
-    """
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return
