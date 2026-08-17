@@ -1,8 +1,7 @@
 import os
 import requests
-import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from common.feishu import (
     get_tenant_access_token,
     create_doc,
@@ -182,7 +181,7 @@ def main():
     print("\n4. 创建飞书云文档...")
     doc_id = create_doc(token, "2026年人社补贴政策追踪（西南四省）")
 
-    print("\n5. 写入表格...")
+    print("\n5. 写入表格（分步创建，逐行追加）...")
     update_doc_with_table(token, doc_id, table_data)
 
     print("\n6. 发送文档链接...")
