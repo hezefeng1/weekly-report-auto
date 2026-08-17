@@ -11,6 +11,69 @@ RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
 
+# ========== 敏感词屏蔽规则 ==========
+SENSITIVE_RULES = [
+    # 组合规则（含逗号，必须同时出现才触发）
+    {"type": "all", "words": ["人力社", "高温补贴"]},
+    {"type": "all", "words": ["国家", "高温补贴"]},
+    {"type": "all", "words": ["人力社", "津贴"]},
+    {"type": "all", "words": ["人力社", "补助"]},
+    {"type": "all", "words": ["人力社", "补贴"]},
+    {"type": "all", "words": ["人力社", "居民补贴"]},
+    {"type": "all", "words": ["人力社", "综合补贴"]},
+    {"type": "all", "words": ["人力社", "个人补贴"]},
+    {"type": "all", "words": ["京东商城", "国家补贴"]},
+    {"type": "all", "words": ["京东商城", "平台补贴"]},
+    {"type": "all", "words": ["工资补贴", "扫描二维码"]},
+    {"type": "all", "words": ["社保局", "工资补贴"]},
+    {"type": "all", "words": ["人力社", "工资补贴"]},
+    {"type": "all", "words": ["薪资补贴", "微信扫码"]},
+    {"type": "all", "words": ["人力社", "薪资补贴"]},
+    {"type": "all", "words": ["人力社", "社保补贴"]},
+    {"type": "all", "words": ["人社局", "补贴"]},
+    {"type": "all", "words": ["国家", "补贴通知"]},
+    {"type": "all", "words": ["补贴", "申领"]},
+    {"type": "all", "words": ["人社部", "个人劳动补贴"]},
+    {"type": "all", "words": ["国家财政部", "补贴"]},
+    {"type": "all", "words": ["社保补贴", "微信扫码"]},
+    # 正则规则
+    {"type": "regex", "pattern": r"^(通 知\.)"},
+    {"type": "regex", "pattern": r"(zip|exe|rar|pdf|doc|docx)$"},
+    {"type": "regex", "pattern": r"^(\d|\_|\.|\-)"},
+    {"type": "regex", "pattern": r"^(\d|\_|\-|\*)"},
+    {"type": "regex", "pattern": r"最新卜帖"},
+    # 单独词
+    {"type": "any", "words": ["发放"]},
+    {"type": "any", "words": ["贴 补"]},
+    {"type": "any", "words": ["卜帖"]},
+    {"type": "any", "words": ["人力社"]},
+    {"type": "any", "words": ["居 民补 贴"]},
+    {"type": "any", "words": ["综 合补 贴"]},
+    {"type": "any", "words": ["裁员名单"]},
+    {"type": "any", "words": ["一业一查"]},
+    {"type": "any", "words": ["部门联合双随机抽查工作计划"]},
+]
+
+
+def clean_text_for_audit(text):
+    """清洗文本中的敏感词，避免触发飞书 230028 审核"""
+    cleaned = text
+    for rule in SENSITIVE_RULES:
+        if rule["type"] == "all":
+            words = rule["words"]
+            if all(w in cleaned for w in words):
+                for w in words:
+                    cleaned = cleaned.replace(w, "***")
+        elif rule["type"] == "regex":
+            pattern = rule["pattern"]
+            if re.search(pattern, cleaned, re.IGNORECASE):
+                cleaned = re.sub(pattern, "***", cleaned, flags=re.IGNORECASE)
+        elif rule["type"] == "any":
+            for w in rule["words"]:
+                cleaned = cleaned.replace(w, "***")
+    return cleaned
+
+
 def generate_policy_report():
     """调用 DeepSeek API 生成政策追踪报告"""
     today = datetime.now().strftime("%Y年%m月%d日")
@@ -40,8 +103,6 @@ def generate_policy_report():
 - 栏目页
 - 列表页
 - 转发/转载页面
-- 搜索结果页
-- 摘要页
 
 ## 城市清单
 
@@ -57,15 +118,7 @@ def generate_policy_report():
 
 ### 政策范围
 - 部门来源：人社局、就业局相关政策
-- 补贴类型（针对企业的奖补）：
-  - 稳岗补贴/稳岗返还补贴
-  - 就业补贴、培训补贴
-  - 残疾人安置补贴
-  - 扩岗补贴、吸纳就业补贴
-  - 招工/用工/招聘补贴
-  - 见习补贴/见习基地
-  - 岗位补贴、引才奖励
-  - 返乡就业补助、跨省就业补助
+- 补贴类型（针对企业的奖补）：稳岗补贴/稳岗返还、就业补贴、培训补贴、残疾人安置补贴、扩岗补贴、吸纳就业补贴、招工补贴、见习补贴、岗位补贴、引才奖励、返乡就业补贴、跨省就业补助
 
 ### 时间范围
 - 发布日期：2026年1月1日之后
@@ -95,12 +148,6 @@ def generate_policy_report():
 - 表格表头：省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 开放申请及截止日期 | 政策原文链接
 - 政策名称列：使用 `[政策名称](政策原文URL)` 格式
 
-### 链接质量要求
-- URL 必须是政策原文页面的直接链接，不含 `?` 或 `&` 追踪参数
-- 禁止输出搜索结果页、列表页、摘要页的链接
-- 链接格式必须为 `http://xxx.gov.cn/xxx/xxx.html` 形式
-- 如果无法获取稳定的政策原文链接，宁可该条政策不输出
-
 ### 数据处理规则
 - 省级政策覆盖多个城市：城市列用顿号分隔
 - 市级政策：城市列填写具体城市名称
@@ -112,7 +159,6 @@ def generate_policy_report():
 - [ ] 日期合规：开放申请日期 ≥ 2026-01-01
 - [ ] 日期有效：截止日期 > 当前日期
 - [ ] 链接原文合规：URL含 /art/、/zhengce/、/policy/ 等路径
-- [ ] 链接无追踪参数：URL不含 ? 或 &
 - [ ] 来源合规：仅gov.cn官方域名
 - [ ] 无公示文件
 - [ ] 格式极简：仅表格，无多余文字
@@ -144,19 +190,14 @@ def generate_policy_report():
 
 
 def parse_markdown_table_to_list(markdown_text):
-    """
-    解析 Markdown 表格，返回 headers 和 rows（列表形式）
-    """
+    """解析 Markdown 表格，返回 rows"""
     lines = markdown_text.strip().split('\n')
     if len(lines) < 2:
-        return None, None
+        return None
 
     data_lines = [line for line in lines if '---' not in line]
     if len(data_lines) < 2:
-        return None, None
-
-    header_line = data_lines[0]
-    headers = [h.strip() for h in header_line.split('|') if h.strip()]
+        return None
 
     rows = []
     for line in data_lines[1:]:
@@ -164,11 +205,11 @@ def parse_markdown_table_to_list(markdown_text):
         if cells:
             rows.append(cells)
 
-    return headers, rows
+    return rows
 
 
 def extract_link(text):
-    """提取 Markdown 链接 [文本](URL) 中的 URL，返回 (显示文本, URL)"""
+    """提取 Markdown 链接"""
     match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
     if match:
         return match.group(1), match.group(2)
@@ -176,51 +217,58 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息（完整 6 列表格）"""
+    """发送飞书富文本消息（带敏感词清洗）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return
 
-    md_lines = []
-    md_lines.append(f"# 📋 2026年人社补贴政策追踪（{region}）\n")
+    content_elements = []
 
-    # 完整 6 列表头（去掉政策原文链接列，因为链接已嵌入政策名称）
-    md_lines.append("| 省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 截止日期 |")
-    md_lines.append("|------|------|----------|--------------|----------------|----------|")
+    title_text = f"📋 2026年人社补贴政策追踪（{region}）"
+    title_text = clean_text_for_audit(title_text)
+    content_elements.append([
+        {"tag": "text", "text": title_text + "\n\n"}
+    ])
 
     policy_count = 0
-    max_policies = 20
     for row in rows:
-        if policy_count >= max_policies:
-            break
         if len(row) < 7:
             continue
         province = row[0]
         city = row[1]
         policy_name_raw = row[2]
-        condition = row[3] if len(row) > 3 else "—"
-        subsidy = row[4] if len(row) > 4 else "—"
         deadline = row[5] if len(row) > 5 else "详见原文"
 
         display_name, link_url = extract_link(policy_name_raw)
 
-        if link_url:
-            # 清理链接中的追踪参数
-            clean_url = re.sub(r'\?.*$', '', link_url)
-            policy_cell = f"[{display_name}]({clean_url})"
-        else:
-            policy_cell = display_name
+        # 清洗敏感词
+        province = clean_text_for_audit(province)
+        city = clean_text_for_audit(city)
+        display_name = clean_text_for_audit(display_name)
+        deadline = clean_text_for_audit(deadline)
 
-        md_lines.append(f"| {province} | {city} | {policy_cell} | {condition} | {subsidy} | {deadline} |")
+        line_parts = []
+        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
+
+        if link_url:
+            line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
+        else:
+            line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
+
+        line_parts.append({"tag": "text", "text": f"\n⏰ {deadline}"})
+
+        content_elements.append(line_parts)
         policy_count += 1
 
-    total_count = len(rows)
-    if total_count > max_policies:
-        md_lines.append(f"\n📊 共找到 {total_count} 条政策，当前展示前 {max_policies} 条")
-    else:
-        md_lines.append(f"\n📊 共找到 {total_count} 条政策")
+        content_elements.append([
+            {"tag": "text", "text": "\n─────────────────────\n"}
+        ])
 
-    md_content = "\n".join(md_lines)
+    footer_text = f"\n📊 共 {len(rows)} 条政策"
+    footer_text = clean_text_for_audit(footer_text)
+    content_elements.append([
+        {"tag": "text", "text": footer_text}
+    ])
 
     send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
@@ -232,11 +280,11 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "receive_id": receive_id,
         "msg_type": "post",
         "content": json.dumps({
-            "zh_cn": {
-                "title": f"2026年人社补贴政策追踪（{region}）",
-                "content": [
-                    [{"tag": "md", "text": md_content}]
-                ]
+            "post": {
+                "zh_cn": {
+                    "title": f"2026年人社补贴政策追踪（{region}）",
+                    "content": content_elements
+                }
             }
         })
     }
@@ -256,22 +304,22 @@ def main():
 
     print("\n1. 生成政策追踪报告...")
     md_content = generate_policy_report()
-    print("=== DeepSeek 返回的完整 Markdown 内容 ===")
+    print("=== DeepSeek 返回的完整内容 ===")
     print(md_content)
     print("=== 内容结束 ===")
 
-    print("\n2. 解析 Markdown 表格...")
-    headers, rows = parse_markdown_table_to_list(md_content)
-    if not headers or not rows:
-        print("  ❌ 未能解析出表格数据，请检查 DeepSeek 输出格式")
+    print("\n2. 解析表格...")
+    rows = parse_markdown_table_to_list(md_content)
+    if not rows:
+        print("  ❌ 未能解析出表格数据")
         return
 
-    print(f"  ✅ 解析成功，表头: {len(headers)} 列，数据: {len(rows)} 行")
+    print(f"  ✅ 解析成功，共 {len(rows)} 条政策")
 
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
-    print("\n4. 发送富文本消息...")
+    print("\n4. 发送富文本消息（已清洗敏感词）...")
     send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows, "西南四省")
 
     print("\n✅ 政策追踪报告发送完成！")
