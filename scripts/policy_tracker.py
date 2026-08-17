@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-人社补贴政策追踪（西南四省）- 最终稳定版
-仅显示关键字段，确保飞书消息不超限制
+人社补贴政策追踪（西南四省）- 纯文本消息版
+使用 msg_type: text，彻底避免 URL 中文字符导致的 230001 错误
 """
 import os
 import requests
@@ -17,7 +17,7 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-# ========== 敏感词屏蔽规则（精简，保留核心） ==========
+# ========== 敏感词屏蔽规则（精简） ==========
 SENSITIVE_RULES = [
     {"type": "any", "words": ["人力社", "卜帖", "贴 补", "发放", "裁员名单"]},
     {"type": "all", "words": ["国家", "补贴通知"]},
@@ -27,7 +27,7 @@ SENSITIVE_RULES = [
 
 
 def clean_text(text):
-    """清洗文本，保证返回非空字符串"""
+    """清洗敏感词，保证返回非空字符串"""
     if not text:
         return "无"
     cleaned = str(text)
@@ -40,7 +40,6 @@ def clean_text(text):
                 cleaned = cleaned.replace(w, "***")
         elif rule["type"] == "regex":
             cleaned = re.sub(rule["pattern"], "***", cleaned, flags=re.IGNORECASE)
-    # 压缩多余空白
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned if cleaned else "无"
 
@@ -92,8 +91,12 @@ def extract_link(text):
     return text, None
 
 
-def send_rich_text_message(access_token, receive_id, rows):
-    """发送飞书富文本消息（极简版，每批最多10条，只显示关键字段）"""
+def send_text_message(access_token, receive_id, rows):
+    """
+    发送飞书纯文本消息（msg_type: text）
+    每条消息最多 10 条政策，超过则分批
+    纯文本消息中的 URL 不会被飞书校验，彻底避免 230001 错误
+    """
     if not receive_id:
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
@@ -114,63 +117,56 @@ def send_rich_text_message(access_token, receive_id, rows):
             batch_num = start // MAX_PER_BATCH + 1
             total_batches = (total + MAX_PER_BATCH - 1) // MAX_PER_BATCH
 
-            content_2d = []
-
-            # 标题
-            title = f"2026年人社补贴政策 · {province}"
+            # 构造纯文本消息内容
+            lines = []
+            title = f"2026年人社补贴政策追踪 · {province}"
             if total_batches > 1:
                 title += f"（{batch_num}/{total_batches}）"
-            content_2d.append([{"tag": "text", "text": clean_text(title)}])
-            content_2d.append([{"tag": "text", "text": "─────────────────────"}])
+            lines.append(title)
+            lines.append("=" * 50)
 
-            # 每条政策：只显示 城市、截止日期、政策名称、链接（纯文本）
             for idx, row in enumerate(batch):
-                province_raw, city_raw, policy_raw, _, _, deadline_raw, link_raw = row[:7]
+                province_raw, city_raw, policy_raw, condition_raw, subsidy_raw, deadline_raw, link_raw = row[:7]
 
                 # 提取政策名称和链接
                 display_name, link_url = extract_link(policy_raw)
                 display_name = clean_text(display_name) if display_name else "政策"
-                # 提取链接（优先用 link_raw 中的，若无则用 policy 中的）
                 _, link_from_raw = extract_link(link_raw)
                 final_link = link_from_raw if link_from_raw else link_url
                 final_link = final_link if final_link else ""
 
-                # 清洗城市和截止日期
+                # 清洗各字段
                 city_cleaned = clean_text(city_raw)
+                condition_cleaned = clean_text(condition_raw)[:80]  # 截断防止过长
+                subsidy_cleaned = clean_text(subsidy_raw)[:60]
                 deadline_cleaned = clean_text(deadline_raw) if deadline_raw else "详见原文"
 
-                # 构造单行文本（不含换行）
-                line = f"📍 {city_cleaned}  ⏰ {deadline_cleaned}  📄 {display_name}"
+                # 组装单条政策
+                line = f"\n📍 {city_cleaned}  ⏰ {deadline_cleaned}"
+                line += f"\n📄 {display_name}"
+                line += f"\n📌 {condition_cleaned}"
+                line += f"\n💰 {subsidy_cleaned}"
                 if final_link:
-                    line += f"  🔗 {final_link}"
-                content_2d.append([{"tag": "text", "text": line}])
+                    line += f"\n🔗 {final_link}"
+                lines.append(line)
+                lines.append("-" * 40)
 
-                if idx < len(batch) - 1:
-                    content_2d.append([{"tag": "text", "text": "─────────────────────"}])
-
-            # 底部统计
-            footer = f"📊 本页 {len(batch)} 条，{province} 共 {total} 条"
+            footer = f"\n📊 本页 {len(batch)} 条，{province} 共 {total} 条"
             if total_batches > 1:
                 footer += f"（第 {batch_num}/{total_batches} 部分）"
-            content_2d.append([{"tag": "text", "text": clean_text(footer)}])
+            lines.append(footer)
 
-            # 构建 JSON payload
-            post_content = {
-                "post": {
-                    "zh_cn": {
-                        "title": f"人社补贴政策 · {province}",
-                        "content": content_2d
-                    }
-                }
-            }
-            payload = {
-                "receive_id": receive_id,
-                "msg_type": "post",
-                "content": json.dumps(post_content, ensure_ascii=False)
-            }
+            # 拼接消息正文
+            text_content = "\n".join(lines)
 
+            # 发送纯文本消息
             send_url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
             headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+            payload = {
+                "receive_id": receive_id,
+                "msg_type": "text",
+                "content": json.dumps({"text": text_content}, ensure_ascii=False)
+            }
 
             resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
             if resp.status_code != 200:
@@ -202,8 +198,8 @@ def main():
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
-    print("\n4. 发送富文本消息...")
-    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows)
+    print("\n4. 发送纯文本消息...")
+    send_text_message(token, RECEIVE_OPEN_ID_POLICY, rows)
 
     print("\n✅ 政策追踪报告发送完成！")
 
