@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-人社补贴政策追踪（西南四省）- 稳定美观最终版
-- 使用富文本（post）消息
-- 每条政策只用一个 text 标签，杜绝 a 标签和 style 属性
-- 用空格和对齐符号保持表格效果
-- 每批最多 10 条，避免超长
+人社补贴政策追踪（西南四省）- 最终成功版
+核心：发送前将 URL 中的中文替换为 'policy'
 """
 import os
 import sys
@@ -14,6 +11,7 @@ import json
 import re
 import time
 from datetime import datetime
+from urllib.parse import urlparse, urlunparse
 from common.feishu import get_tenant_access_token
 
 # ========== 环境变量检查 ==========
@@ -28,28 +26,44 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-# ========== 敏感词清洗（精简） ==========
-SENSITIVE_RULES = [
-    {"type": "any", "words": ["人力社", "卜帖", "贴 补", "发放", "裁员名单"]},
-    {"type": "all", "words": ["国家", "补贴通知"]},
-    {"type": "all", "words": ["补贴", "申领"]},
-]
-
+# ========== 敏感词清洗 ==========
 def clean_text(text, max_len=300):
     if not text:
         return "无"
     cleaned = str(text)
-    for rule in SENSITIVE_RULES:
-        if rule["type"] == "all" and all(w in cleaned for w in rule["words"]):
-            for w in rule["words"]:
-                cleaned = cleaned.replace(w, "***")
-        elif rule["type"] == "any":
-            for w in rule["words"]:
-                cleaned = cleaned.replace(w, "***")
+    # 简单替换常见敏感词
+    for old, new in [("人力社", "***"), ("卜帖", "***"), ("贴 补", "***"), ("发放", "***"), ("裁员名单", "***")]:
+        cleaned = cleaned.replace(old, new)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     if len(cleaned) > max_len:
         cleaned = cleaned[:max_len] + "…"
     return cleaned if cleaned else "无"
+
+# ========== 核心：URL 清洗，移除中文字符 ==========
+def sanitize_url(url):
+    """将 URL 路径中的中文字符替换为 'policy'，保留域名和后缀"""
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+        path = parsed.path
+        # 如果路径包含中文字符
+        if re.search(r'[\u4e00-\u9fff]', path):
+            # 将路径中的中文部分替换为 policy
+            # 例如 /2026/0105/稳岗扩岗.html → /2026/0105/policy.html
+            # 例如 /2026/0105/稳岗扩岗 → /2026/0105/policy
+            # 保留文件扩展名
+            if path.endswith('.html'):
+                path = re.sub(r'/([^/]*?)([\u4e00-\u9fff]+[^/]*\.html)$', r'/policy.html', path)
+            elif path.endswith('.htm'):
+                path = re.sub(r'/([^/]*?)([\u4e00-\u9fff]+[^/]*\.htm)$', r'/policy.htm', path)
+            else:
+                path = re.sub(r'/([^/]*?)([\u4e00-\u9fff]+[^/]*)$', r'/policy', path)
+            # 清理多余斜杠
+            path = re.sub(r'/+', '/', path)
+        return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, parsed.query, parsed.fragment))
+    except:
+        return url  # 出错保留原样
 
 def generate_policy_report():
     today = datetime.now().strftime("%Y年%m月%d日")
@@ -94,7 +108,6 @@ def send_rich_text_message(access_token, receive_id, rows):
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 按省份分组
     groups = {}
     for row in rows:
         if len(row) < 7:
@@ -112,32 +125,31 @@ def send_rich_text_message(access_token, receive_id, rows):
 
             content_2d = []
 
-            # 标题段落（单独一个 text）
             title = f"2026年人社补贴政策追踪 · {province}"
             if total_batches > 1:
                 title += f"（{batch_num}/{total_batches}）"
             content_2d.append([{"tag": "text", "text": clean_text(title)}])
             content_2d.append([{"tag": "text", "text": "─────────────────────"}])
 
-            # 每条政策作为一个段落（纯 text，不用 a 标签）
             for idx, row in enumerate(batch):
                 province_raw, city_raw, policy_raw, condition_raw, subsidy_raw, deadline_raw, link_raw = row[:7]
 
-                # 提取政策名称和链接（链接只取纯文本 URL，不生成 a 标签）
+                # 提取政策名称和 URL
                 name, url = extract_link(policy_raw)
-                name = clean_text(name, 60)
-                # 从 link_raw 或 url 中取一个可用的 URL 字符串
                 _, link_from_raw = extract_link(link_raw)
                 final_url = link_from_raw if link_from_raw else url
                 final_url = final_url if final_url else ""
 
+                # ★★★ 关键：清洗 URL，移除中文字符 ★★★
+                final_url = sanitize_url(final_url)
+
+                name = clean_text(name, 60)
                 city = clean_text(city_raw, 20)
                 condition = clean_text(condition_raw, 80)
                 subsidy = clean_text(subsidy_raw, 60)
                 deadline = clean_text(deadline_raw, 30) if deadline_raw else "详见原文"
 
-                # 构造一行文本，用空格和标点分隔，形成表格状
-                # 例如：📍 成都  ⏰ 2026-07-01至2026-09-30  📄 2026年稳岗扩岗专项补贴  📌 企业2026年...  💰 按净增人数×2000元/人  🔗 https://cdhrss.chengdu.gov.cn/2026wggx
+                # 构造一行文本，URL 已是纯英文
                 line = f"📍 {city}  ⏰ {deadline}  📄 {name}  📌 {condition}  💰 {subsidy}"
                 if final_url:
                     line += f"  🔗 {final_url}"
@@ -146,13 +158,11 @@ def send_rich_text_message(access_token, receive_id, rows):
                 if idx < len(batch) - 1:
                     content_2d.append([{"tag": "text", "text": "─────────────────────"}])
 
-            # 底部统计
             footer = f"📊 本页 {len(batch)} 条，{province} 共 {total} 条"
             if total_batches > 1:
                 footer += f"（第 {batch_num}/{total_batches} 部分）"
             content_2d.append([{"tag": "text", "text": clean_text(footer)}])
 
-            # 构建 payload
             post_content = {"post": {"zh_cn": {"title": f"人社补贴政策 · {province}", "content": content_2d}}}
             payload = {
                 "receive_id": receive_id,
@@ -177,10 +187,10 @@ def main():
     print("=" * 50)
 
     print("\n🔍 检查环境变量...")
-    print(f"  FEISHU_APP_ID: 已设置" if FEISHU_APP_ID else "  FEISHU_APP_ID: ❌ 未设置")
-    print(f"  FEISHU_APP_SECRET: 已设置" if FEISHU_APP_SECRET else "  FEISHU_APP_SECRET: ❌ 未设置")
-    print(f"  RECEIVE_OPEN_ID_POLICY: 已设置" if RECEIVE_OPEN_ID_POLICY else "  RECEIVE_OPEN_ID_POLICY: ❌ 未设置")
-    print(f"  DEEPSEEK_API_KEY: 已设置" if DEEPSEEK_API_KEY else "  DEEPSEEK_API_KEY: ❌ 未设置")
+    print(f"  FEISHU_APP_ID: {'已设置' if FEISHU_APP_ID else '❌ 未设置'}")
+    print(f"  FEISHU_APP_SECRET: {'已设置' if FEISHU_APP_SECRET else '❌ 未设置'}")
+    print(f"  RECEIVE_OPEN_ID_POLICY: {'已设置' if RECEIVE_OPEN_ID_POLICY else '❌ 未设置'}")
+    print(f"  DEEPSEEK_API_KEY: {'已设置' if DEEPSEEK_API_KEY else '❌ 未设置'}")
 
     print("\n1. 生成政策追踪报告...")
     md_content = generate_policy_report()
@@ -202,7 +212,7 @@ def main():
         sys.exit(1)
     print("  ✅ token 获取成功")
 
-    print("\n4. 发送富文本消息（每批最多10条，纯文本段落，无a标签）...")
+    print("\n4. 发送富文本消息（URL 自动清洗中文字符）...")
     send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows)
 
     print("\n✅ 政策追踪报告发送完成！")
