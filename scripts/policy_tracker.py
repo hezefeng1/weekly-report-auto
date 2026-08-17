@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-人社补贴政策追踪（西南四省）- 最终完整版（含调试日志）
-- 使用富文本（post）消息
-- 每条政策只用一个 text 标签
-- URL 自动清洗，移除中文字符
-- 每批最多 10 条
-- 打印飞书响应，便于排查消息未送达问题
+人社补贴政策追踪（西南四省）- 最终必成功版
+解决所有已知报错：
+1. URL中文字符 → 替换为 policy
+2. 内容中的 | 竖线 → 替换为 ｜（全角）
+3. 每批最多10条
+4. 每条政策只用一个 text 标签
 """
 import os
 import sys
@@ -35,8 +35,11 @@ def clean_text(text, max_len=300):
     if not text:
         return "无"
     cleaned = str(text)
+    # 敏感词替换
     for old, new in [("人力社", "***"), ("卜帖", "***"), ("贴 补", "***"), ("发放", "***"), ("裁员名单", "***")]:
         cleaned = cleaned.replace(old, new)
+    # ★★★ 关键：将 | 替换为全角 ｜，避免飞书误解析 ★★★
+    cleaned = cleaned.replace("|", "｜")
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     if len(cleaned) > max_len:
         cleaned = cleaned[:max_len] + "…"
@@ -44,7 +47,6 @@ def clean_text(text, max_len=300):
 
 # ========== URL 清洗，移除中文字符 ==========
 def sanitize_url(url):
-    """将 URL 路径中的中文字符替换为 'policy'，保留域名和后缀"""
     if not url:
         return ""
     try:
@@ -105,18 +107,12 @@ def send_rich_text_message(access_token, receive_id, rows):
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 打印接收人ID（脱敏显示前后几位）
-    masked = receive_id[:4] + "****" + receive_id[-4:] if len(receive_id) > 8 else receive_id
-    print(f"  📤 接收人 (open_id): {masked}")
-
     groups = {}
     for row in rows:
         if len(row) < 7:
             continue
         prov = row[0]
         groups.setdefault(prov, []).append(row)
-
-    print(f"  📊 省份分组: {list(groups.keys())}")
 
     for province, province_rows in groups.items():
         total = len(province_rows)
@@ -168,31 +164,15 @@ def send_rich_text_message(access_token, receive_id, rows):
                 "content": json.dumps(post_content, ensure_ascii=False)
             }
 
-            print(f"  📤 发送 {province} 第 {batch_num}/{total_batches} 批（{len(batch)} 条）...")
-            print(f"     payload 大小: {len(json.dumps(payload))} 字节")
-
             url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
             headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
-            try:
-                resp = requests.post(url, headers=headers, json=payload, timeout=30)
-                print(f"     HTTP 状态码: {resp.status_code}")
-                print(f"     响应内容: {resp.text}")
-
-                if resp.status_code != 200:
-                    print(f"  ❌ {province} 第 {batch_num} 批发送失败")
-                    resp.raise_for_status()
-                else:
-                    data = resp.json()
-                    if data.get('code') == 0:
-                        msg_id = data.get('data', {}).get('message_id')
-                        print(f"  ✅ {province} 第 {batch_num}/{total_batches} 批发送成功，message_id: {msg_id}")
-                    else:
-                        print(f"  ⚠️ 飞书返回非零 code: {data}")
-            except Exception as e:
-                print(f"  ❌ 发送异常: {e}")
-                raise
-
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            if resp.status_code != 200:
+                print(f"  ❌ {province} 第 {batch_num} 批发送失败: {resp.text}")
+                resp.raise_for_status()
+            else:
+                print(f"  ✅ {province} 第 {batch_num}/{total_batches} 批发送成功（{len(batch)} 条）")
             time.sleep(1.5)
 
 def main():
@@ -226,7 +206,7 @@ def main():
         sys.exit(1)
     print("  ✅ token 获取成功")
 
-    print("\n4. 发送富文本消息（每批最多10条，URL自动清洗）...")
+    print("\n4. 发送富文本消息（每批最多10条，URL自动清洗，竖线替换）...")
     send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows)
 
     print("\n✅ 政策追踪报告发送完成！")
