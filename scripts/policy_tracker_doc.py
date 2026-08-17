@@ -12,7 +12,6 @@ DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
 
 def generate_policy_report():
-    """调用 DeepSeek API 生成政策追踪报告"""
     today = datetime.now().strftime("%Y年%m月%d日")
 
     system_prompt = """你是人社政策情报分析AI。
@@ -145,11 +144,6 @@ def main():
     print(md_content)
     print("=== 内容结束 ===")
 
-    # 组装完整文档内容（加上说明文字）
-    doc_content = """此文档为AI助手搜集整理，为2026年有新发布的人社政策提醒，用于辅助产业人社类政策信息参考（网址链接为政策原文，点击即可查看详情）。如有适合本公司的政策，具体详情请咨询当地人社局/就业局或官网政策查询为准。
-
-""" + md_content
-
     print("\n2. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
@@ -157,7 +151,8 @@ def main():
     doc_id = create_doc(token, "2026年人社补贴政策追踪（西南四省）")
 
     print("\n4. 写入文档内容...")
-    update_doc_content(token, doc_id, doc_content)
+    # 直接将 Markdown 内容传入，由 update_doc_content 负责解析和转换
+    update_doc_content(token, doc_id, md_content)
 
     print("\n5. 发送文档链接...")
     send_doc_link_message(token, RECEIVE_OPEN_ID_POLICY, doc_id, "西南四省")
