@@ -1,6 +1,5 @@
 import requests
 import json
-import re
 
 # ========== 原有函数（两个周报使用，保持不变） ==========
 
@@ -37,7 +36,7 @@ def send_image_message(access_token, receive_id, image_key):
     return resp.json()
 
 
-# ========== 新增函数（政策追踪云文档版使用，不影响两个周报） ==========
+# ========== 新增函数（政策追踪云文档版使用） ==========
 
 def create_doc(access_token, title):
     """创建飞书云文档（空文档）"""
@@ -55,7 +54,7 @@ def create_doc(access_token, title):
 
 
 def update_doc_content(access_token, doc_id, content):
-    """向云文档写入内容（纯文本块）"""
+    """向云文档写入内容（纯文本，简化版）"""
     root_block_id = doc_id
     update_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks/{root_block_id}/children"
     headers = {
@@ -63,39 +62,49 @@ def update_doc_content(access_token, doc_id, content):
         "Content-Type": "application/json"
     }
 
-    lines = content.split('\n')
-    blocks = []
-    for line in lines:
-        if line.strip():
-            blocks.append({
+    # 将整个内容作为一个大的文本块写入
+    block = {
+        "block_type": 3,
+        "text": {
+            "elements": [
+                {"text_run": {"content": content}}
+            ]
+        }
+    }
+
+    resp = requests.post(update_url, headers=headers, json={"children": [block]}, timeout=60)
+    if resp.status_code != 200:
+        # 如果一次写入失败，尝试分段写入
+        print(f"  ⚠️ 整体写入失败，尝试分段写入...")
+        lines = content.split('\n')
+        chunks = []
+        current_chunk = ""
+        for line in lines:
+            if len(current_chunk) + len(line) > 2000:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            current_chunk += line + "\n"
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        for idx, chunk in enumerate(chunks):
+            block = {
                 "block_type": 3,
                 "text": {
                     "elements": [
-                        {"text_run": {"content": line}}
+                        {"text_run": {"content": chunk}}
                     ]
                 }
-            })
-
-    if not blocks:
-        blocks.append({
-            "block_type": 3,
-            "text": {
-                "elements": [
-                    {"text_run": {"content": "暂无政策数据"}}
-                ]
             }
-        })
+            resp2 = requests.post(update_url, headers=headers, json={"children": [block]}, timeout=60)
+            if resp2.status_code == 200:
+                print(f"  ✅ 第 {idx+1} 段写入成功")
+            else:
+                print(f"  ⚠️ 第 {idx+1} 段写入失败: {resp2.text}")
+    else:
+        print(f"  ✅ 文档内容写入完成")
 
-    batch_size = 20
-    for i in range(0, len(blocks), batch_size):
-        batch = blocks[i:i+batch_size]
-        resp = requests.post(update_url, headers=headers, json={"children": batch}, timeout=60)
-        if resp.status_code != 200:
-            print(f"  ⚠️ 第 {i//batch_size + 1} 批写入失败: {resp.text}")
-        else:
-            print(f"  ✅ 第 {i//batch_size + 1} 批写入成功")
-
-    print(f"  ✅ 文档内容写入完成，共 {len(blocks)} 个块")
+    print(f"  ✅ 文档内容写入完成")
 
 
 def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省"):
@@ -119,6 +128,8 @@ def send_doc_link_message(access_token, receive_id, doc_id, region="西南四省
         "content": json.dumps({"text": message_text})
     }
     resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        print(f"  ❌ 发送消息失败: {resp.text}")
+        resp.raise_for_status()
     print(f"  ✅ 文档链接已发送")
     return resp.json()
