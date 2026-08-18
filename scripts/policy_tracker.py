@@ -119,11 +119,12 @@ def parse_markdown_table_to_list(markdown_text):
     lines = markdown_text.strip().split('\n')
     if len(lines) < 2:
         return None
+    # 过滤掉分隔行（包含 '---'）
     data_lines = [line for line in lines if '---' not in line]
     if len(data_lines) < 2:
         return None
     rows = []
-    for line in data_lines[1:]:
+    for line in data_lines[1:]:  # 跳过表头
         cells = [c.strip() for c in line.split('|') if c.strip()]
         if cells:
             rows.append(cells)
@@ -143,25 +144,34 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 仅发送前15条（可根据需要调整）
-    rows_to_send = rows[:15]
+    # 限制发送条数，避免超限
+    max_send = 15
+    rows_to_send = rows[:max_send]
 
-    # 构建 content 二维数组，每个段落是一个数组
+    # 构建 content 二维数组
     content_blocks = []
 
-    # 标题段落
+    # 标题
     content_blocks.append([
         {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）"}
     ])
     content_blocks.append([
-        {"tag": "text", "text": " "}  # 空行
+        {"tag": "text", "text": " "}
     ])
 
     # 逐条政策
     for idx, row in enumerate(rows_to_send):
-        if len(row) < 7:
-            continue
-        province, city, policy_name_raw, _, _, deadline = row[0], row[1], row[2], "", row[5] if len(row) > 5 else "详见原文"
+        # 安全获取字段
+        province = row[0] if len(row) > 0 else "未知"
+        city = row[1] if len(row) > 1 else "未知"
+        policy_name_raw = row[2] if len(row) > 2 else "政策名称缺失"
+        # 截止日期可能在索引5，也可能在其他位置，我们尝试取第5个或最后一个
+        if len(row) > 5:
+            deadline = row[5]
+        else:
+            # 如果行数少于6，尝试取最后一个非空值作为截止日期
+            deadline = row[-1] if len(row) > 3 else "详见原文"
+
         display_name, link_url = extract_link(policy_name_raw)
 
         # 省份+城市
@@ -184,7 +194,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
             {"tag": "text", "text": f"⏰ 截止：{deadline}"}
         ])
 
-        # 分隔线（除了最后一条）
+        # 分隔线（除最后一条）
         if idx < len(rows_to_send) - 1:
             content_blocks.append([
                 {"tag": "text", "text": "─────────────────────"}
@@ -192,16 +202,16 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     # 底部统计
     total = len(rows)
-    if total > 15:
+    if total > max_send:
         content_blocks.append([
-            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前15条）"}
+            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前{max_send}条）"}
         ])
     else:
         content_blocks.append([
             {"tag": "text", "text": f"📊 共 {total} 条政策"}
         ])
 
-    # 构造完整的 post 内容
+    # 构造 post 内容
     post_content = {
         "post": {
             "zh_cn": {
@@ -217,14 +227,12 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "Content-Type": "application/json"
     }
 
-    # 🔥 关键：content 必须为 JSON 字符串
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
         "content": json.dumps(post_content, ensure_ascii=False)
     }
 
-    # 调试信息
     print(f"  📊 消息体积：{len(json.dumps(payload, ensure_ascii=False))} 字节")
     print(f"  📤 发送 {len(rows_to_send)} 条政策")
 
@@ -253,7 +261,7 @@ def main():
         print("  ❌ 未能解析出表格数据")
         return
 
-    print(f"  ✅ 解析成功，表头: {len(rows[0])} 列，数据: {len(rows)} 行")
+    print(f"  ✅ 解析成功，表头: {len(rows[0]) if rows else 0} 列，数据: {len(rows)} 行")
 
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
