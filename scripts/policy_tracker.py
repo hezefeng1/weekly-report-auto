@@ -249,7 +249,7 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         print("  ⚠️ 没有有效的政策数据可展示")
         return
 
-    # 构建卡片（飞书卡片 Schema 2.0）
+    # ✅ 修正后的卡片结构：扁平化，顶层直接是 config 和 elements
     card = {
         "config": {
             "wide_screen_mode": True
@@ -293,11 +293,11 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
 
     payload = {
         "receive_id": receive_id,
-        "msg_type": "interactive",   # 🔥 关键：使用 interactive
+        "msg_type": "interactive",
         "content": json.dumps(card, ensure_ascii=False)
     }
 
-    # 打印调试
+    # 打印完整入参（脱敏）
     print("\n" + "=" * 60)
     print("📤 完整入参（脱敏 receive_id）:")
     print("=" * 60)
