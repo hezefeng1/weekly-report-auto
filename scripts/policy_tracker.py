@@ -10,34 +10,6 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-# 城市官网首页映射（根据实际地址调整）
-CITY_WEBSITE = {
-    "成都市": "http://cdhrss.chengdu.gov.cn",
-    "绵阳市": "http://rsj.my.gov.cn",
-    "德阳市": "http://rsj.deyang.gov.cn",
-    "泸州市": "http://rsj.luzhou.gov.cn",
-    "南充市": "http://rsj.nanchong.gov.cn",
-    "宜宾市": "http://rsj.yibin.gov.cn",
-    "达州市": "http://rsj.dazhou.gov.cn",
-    "广安市": "http://rsj.guang-an.gov.cn",
-    "眉山市": "http://rsj.ms.gov.cn",
-    "自贡市": "http://rsj.zg.gov.cn",
-    "乐山市": "http://rsj.leshan.gov.cn",
-    "广元市": "http://rsj.cngy.gov.cn",
-    "资阳市": "http://rsj.ziyang.gov.cn",
-    "西昌市": "http://rsj.xichang.gov.cn",
-    "重庆市": "http://rlsbj.cq.gov.cn",
-    "昆明市": "http://rsj.km.gov.cn",
-    "曲靖市": "http://rsj.qj.gov.cn",
-    "德宏傣族景颇族自治州": "http://rsj.dh.gov.cn",
-    "贵阳市": "http://rsj.guiyang.gov.cn",
-    "遵义市": "http://rsj.zunyi.gov.cn",
-    "毕节市": "http://rsj.bijie.gov.cn",
-    "六盘水市": "http://rsj.gzlps.gov.cn",
-    "黔东南苗族侗族自治州": "http://rsj.qdn.gov.cn",
-    "黔西南布依族苗族自治州": "http://rsj.qxn.gov.cn",
-}
-
 
 def generate_policy_report():
     today = datetime.now().strftime("%Y年%m月%d日")
@@ -165,33 +137,24 @@ def extract_link(text):
     return text, None
 
 
-def get_website_by_city(city):
-    if city in CITY_WEBSITE:
-        return CITY_WEBSITE[city]
-    # 尝试去掉“市”后匹配
-    city_simple = city.replace("市", "")
-    for key in CITY_WEBSITE:
-        if key.replace("市", "") == city_simple:
-            return CITY_WEBSITE[key]
-    return f"https://www.baidu.com/s?wd={city} 人社局"
-
-
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送富文本消息 - 最安全结构（每段一个元素）"""
+    """发送富文本消息，使用与成功测试完全一致的结构"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 只发前8条（确保极简）
-    rows_to_send = rows[:8]
+    # 只发送前10条
+    rows_to_send = rows[:10]
 
     # 构建 content 二维数组
     content_blocks = []
 
-    # 标题
+    # 标题行（单独一个段落）
     content_blocks.append([
         {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）"}
     ])
+
+    # 空行（为了使排版更清晰）
     content_blocks.append([
         {"tag": "text", "text": " "}
     ])
@@ -205,33 +168,22 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         policy_name_raw = row[2] if len(row) > 2 else ""
         deadline = row[5] if len(row) > 5 else "详见原文"
 
-        # 提取纯文本名称
+        # 提取纯文本名称（不包含 Markdown 链接标记）
         display_name, _ = extract_link(policy_name_raw)
         if not display_name:
             display_name = policy_name_raw
-        # 截断过长的名称（可选）
-        if len(display_name) > 50:
-            display_name = display_name[:47] + "..."
 
-        # 获取官网首页
-        website = get_website_by_city(city)
-
-        # 段落1：省份+城市（text）
+        # 段落1：省份 + 城市
         content_blocks.append([
             {"tag": "text", "text": f"📍 {province}｜{city}"}
         ])
 
-        # 段落2：政策名称（text，不加链接，避免a标签）
+        # 段落2：政策名称（纯文本，不添加链接）
         content_blocks.append([
             {"tag": "text", "text": f"   {display_name}"}
         ])
 
-        # 段落3：官网链接（单独一个a标签）
-        content_blocks.append([
-            {"tag": "a", "text": "🏢 当地人社局官网", "href": website}
-        ])
-
-        # 段落4：截止日期（text）
+        # 段落3：截止日期
         content_blocks.append([
             {"tag": "text", "text": f"   ⏰ 截止：{deadline}"}
         ])
@@ -244,16 +196,16 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     # 底部统计
     total = len(rows)
-    if total > 8:
+    if total > 10:
         content_blocks.append([
-            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前8条）"}
+            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前10条）"}
         ])
     else:
         content_blocks.append([
             {"tag": "text", "text": f"📊 共 {total} 条政策"}
         ])
 
-    # 构造 post 内容
+    # 构造完整的 post 内容（与成功测试完全一致的结构）
     post_content = {
         "post": {
             "zh_cn": {
@@ -276,10 +228,15 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "content": json.dumps(post_content, ensure_ascii=False)
     }
 
-    # 打印完整 payload（脱敏 receive_id）
-    payload_debug = payload.copy()
-    payload_debug["receive_id"] = "***"
-    print(f"  📤 完整 Payload（脱敏）:\n{json.dumps(payload_debug, ensure_ascii=False, indent=2)}")
+    # 打印调试信息
+    print(f"  📊 消息体积：{len(json.dumps(payload, ensure_ascii=False))} 字节")
+    print(f"  📤 发送 {len(rows_to_send)} 条政策")
+
+    # 打印完整请求体（脱敏 receive_id）方便核对
+    debug_payload = payload.copy()
+    debug_payload["receive_id"] = "***"
+    print("  📝 请求体预览（脱敏）：")
+    print(json.dumps(debug_payload, ensure_ascii=False, indent=2)[:500] + "...")
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
