@@ -12,9 +12,7 @@ DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
 
 def generate_policy_report():
-    """调用 DeepSeek API 生成政策追踪报告"""
     today = datetime.now().strftime("%Y年%m月%d日")
-
     system_prompt = """你是人社政策情报分析AI。
 
 任务：搜索2026年1月1日之后新发布的企业补贴政策，覆盖四川省、重庆市、云南省、贵州省，输出表格格式政策追踪报告。
@@ -118,26 +116,21 @@ def generate_policy_report():
 
 
 def parse_markdown_table_to_list(markdown_text):
-    """解析 Markdown 表格，返回 rows"""
     lines = markdown_text.strip().split('\n')
     if len(lines) < 2:
         return None
-
     data_lines = [line for line in lines if '---' not in line]
     if len(data_lines) < 2:
         return None
-
     rows = []
     for line in data_lines[1:]:
         cells = [c.strip() for c in line.split('|') if c.strip()]
         if cells:
             rows.append(cells)
-
     return rows
 
 
 def extract_link(text):
-    """提取 Markdown 链接"""
     match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
     if match:
         return match.group(1), match.group(2)
@@ -145,94 +138,99 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息（极简版）"""
+    """发送飞书富文本消息 - 极简稳定版"""
     if not receive_id or receive_id == "":
-        print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
+        print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 只发5条
-    rows_to_send = rows[:5]
+    # 仅发送前15条（可根据需要调整）
+    rows_to_send = rows[:15]
 
-    # 构建富文本内容
-    content_elements = []
+    # 构建 content 二维数组，每个段落是一个数组
+    content_blocks = []
 
-    # 标题
-    content_elements.append([
-        {"tag": "text", "text": "📋 2026年人社补贴政策追踪（西南四省）\n\n"}
+    # 标题段落
+    content_blocks.append([
+        {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）"}
+    ])
+    content_blocks.append([
+        {"tag": "text", "text": " "}  # 空行
     ])
 
-    # 每条政策
-    for row in rows_to_send:
+    # 逐条政策
+    for idx, row in enumerate(rows_to_send):
         if len(row) < 7:
             continue
-        province = row[0]
-        city = row[1]
-        policy_name_raw = row[2]
-        deadline = row[5] if len(row) > 5 else "详见原文"
-
+        province, city, policy_name_raw, _, _, deadline = row[0], row[1], row[2], "", row[5] if len(row) > 5 else "详见原文"
         display_name, link_url = extract_link(policy_name_raw)
 
-        if link_url:
-            line_parts = [
-                {"tag": "text", "text": f"📍 {province}｜{city}  "},
-                {"tag": "a", "text": display_name, "href": link_url},
-                {"tag": "text", "text": f"  ⏰ {deadline}"}
-            ]
-        else:
-            line_parts = [
-                {"tag": "text", "text": f"📍 {province}｜{city}  {display_name}  ⏰ {deadline}"}
-            ]
-
-        content_elements.append(line_parts)
-        content_elements.append([
-            {"tag": "text", "text": "─────────────────────"}
+        # 省份+城市
+        content_blocks.append([
+            {"tag": "text", "text": f"📍 {province}｜{city}"}
         ])
 
-    # 末尾
-    total_count = len(rows)
-    if total_count > 5:
-        content_elements.append([
-            {"tag": "text", "text": f"📊 共 {total_count} 条政策（仅展示前5条）"}
+        # 政策名称（链接或纯文本）
+        if link_url:
+            content_blocks.append([
+                {"tag": "a", "text": display_name, "href": link_url}
+            ])
+        else:
+            content_blocks.append([
+                {"tag": "text", "text": display_name}
+            ])
+
+        # 截止日期
+        content_blocks.append([
+            {"tag": "text", "text": f"⏰ 截止：{deadline}"}
+        ])
+
+        # 分隔线（除了最后一条）
+        if idx < len(rows_to_send) - 1:
+            content_blocks.append([
+                {"tag": "text", "text": "─────────────────────"}
+            ])
+
+    # 底部统计
+    total = len(rows)
+    if total > 15:
+        content_blocks.append([
+            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前15条）"}
         ])
     else:
-        content_elements.append([
-            {"tag": "text", "text": f"📊 共 {total_count} 条政策"}
+        content_blocks.append([
+            {"tag": "text", "text": f"📊 共 {total} 条政策"}
         ])
 
-    # 🔥 核心修复：content 必须是 JSON 字符串
+    # 构造完整的 post 内容
     post_content = {
         "post": {
             "zh_cn": {
                 "title": "2026年人社补贴政策追踪报告",
-                "content": content_elements
+                "content": content_blocks
             }
         }
     }
 
-    send_url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+    url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
 
-    # 🔥 content 用 json.dumps 序列化成字符串
+    # 🔥 关键：content 必须为 JSON 字符串
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
         "content": json.dumps(post_content, ensure_ascii=False)
     }
 
-    # 调试打印
-    msg_size = len(json.dumps(payload, ensure_ascii=False))
-    print(f"  📊 消息体积：{msg_size} 字节")
+    # 调试信息
+    print(f"  📊 消息体积：{len(json.dumps(payload, ensure_ascii=False))} 字节")
+    print(f"  📤 发送 {len(rows_to_send)} 条政策")
 
-    # 打印 payload 的结构（前200字符）
-    payload_preview = json.dumps(payload, ensure_ascii=False)[:200]
-    print(f"  📝 Payload 预览：{payload_preview}...")
-
-    resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
-        print(f"  ❌ 发送消息失败: {resp.text}")
+        print(f"  ❌ 发送失败: {resp.text}")
         resp.raise_for_status()
 
     print(f"  ✅ 富文本消息发送成功，共 {len(rows_to_send)} 条政策")
@@ -245,17 +243,17 @@ def main():
 
     print("\n1. 生成政策追踪报告...")
     md_content = generate_policy_report()
-    print("=== DeepSeek 返回的完整内容 ===")
+    print("=== DeepSeek 返回的完整 Markdown 内容 ===")
     print(md_content)
     print("=== 内容结束 ===")
 
-    print("\n2. 解析表格...")
+    print("\n2. 解析 Markdown 表格...")
     rows = parse_markdown_table_to_list(md_content)
     if not rows:
         print("  ❌ 未能解析出表格数据")
         return
 
-    print(f"  ✅ 解析成功，共 {len(rows)} 条政策")
+    print(f"  ✅ 解析成功，表头: {len(rows[0])} 列，数据: {len(rows)} 行")
 
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
