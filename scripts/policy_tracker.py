@@ -10,6 +10,80 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
+# ==================== 屏蔽词规则 ====================
+SENSITIVE_RULES = """
+发放,http
+贴 补
+卜帖
+人力社,高温补贴
+国家,高温补贴
+最新卜帖
+^(通 知\.)
+(zip|exe|rar|
+pdf|doc|docx)$
+人力社
+^(\d|\_|\.|\-)
+*(zip|exe|rar)$
+一业一查
+部门联合双随机抽查工作计划
+人力社,津贴
+人力社,补助
+人力社,补贴
+人力社,居民补贴
+人力社,综合补贴
+人力社,个人补贴
+人力社,补贴
+居 民补 贴
+综 合补 贴
+京东商城,国家补贴
+京东商城,平台补贴
+工资补贴,扫描二维码
+社保局工资补贴
+人力社,工资补贴
+薪资补贴,微信扫码
+人力社,薪资补贴
+人力社,社保补贴
+人社部个人劳动补贴
+国家财政部补贴
+社保补贴,微信扫码
+人社局,补贴
+国家,补贴通知
+补贴,申领
+裁员名单
+""".strip().splitlines()
+
+def load_sensitive_rules(lines):
+    rules = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        # 按逗号分割，并去除空格
+        keywords = [kw.strip() for kw in line.split(',') if kw.strip()]
+        if keywords:
+            rules.append(keywords)
+    return rules
+
+SENSITIVE_RULES = load_sensitive_rules(SENSITIVE_RULES)
+
+def filter_sensitive(text):
+    """过滤屏蔽词，只替换纯文本中的关键词组合"""
+    if not text:
+        return text
+    text_lower = text.lower()
+    for keywords in SENSITIVE_RULES:
+        # 检查是否所有关键词都出现在文本中（忽略大小写）
+        if all(kw.lower() in text_lower for kw in keywords):
+            # 对每个关键词进行替换（为了安全，用 *** 代替）
+            for kw in keywords:
+                text = text.replace(kw, "***")
+                # 同时替换可能存在的不同写法（如空格）
+                kw_no_space = kw.replace(" ", "")
+                if kw_no_space != kw:
+                    text = text.replace(kw_no_space, "***")
+    return text
+# ==================================================
+
 
 def generate_policy_report():
     today = datetime.now().strftime("%Y年%m月%d日")
@@ -137,18 +211,28 @@ def extract_link(text):
     return text, None
 
 
-def send_card_message(access_token, receive_id, rows, region="西南四省"):
-    """发送消息卡片，使用表格组件展示政策列表"""
+def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 限制数据量，卡片表格不宜太多行（建议不超过10行）
-    rows_to_send = rows[:10]
+    # 只发前5条（避免超长）
+    rows_to_send = rows[:5]
 
-    # 构建表格行数据
-    table_rows = []
-    for row in rows_to_send:
+    content_blocks = []
+
+    # 标题（也经过过滤）
+    title_text = filter_sensitive(f"📋 2026年人社补贴政策追踪（{region}）")
+    content_blocks.append([
+        {"tag": "text", "text": title_text}
+    ])
+
+    # 空行
+    content_blocks.append([
+        {"tag": "text", "text": " "}
+    ])
+
+    for idx, row in enumerate(rows_to_send):
         if len(row) < 5:
             continue
         province = row[0] if len(row) > 0 else ""
@@ -159,57 +243,49 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         display_name, link_url = extract_link(policy_name_raw)
         if not display_name:
             display_name = policy_name_raw
-        if len(display_name) > 30:
-            display_name = display_name[:27] + "..."
 
-        # 表格每一行是一个数组
-        row_cells = [
-            {"text": province},
-            {"text": city},
-            {"text": display_name, "href": link_url} if link_url else {"text": display_name},
-            {"text": deadline}
-        ]
-        table_rows.append(row_cells)
+        # 对纯文本部分进行过滤
+        province = filter_sensitive(province)
+        city = filter_sensitive(city)
+        display_name = filter_sensitive(display_name)
+        deadline = filter_sensitive(deadline)
 
-    # 如果数据为空，发送提示
-    if not table_rows:
-        print("  ⚠️ 没有有效的政策数据可展示")
-        return
+        # 截断过长的名称
+        if len(display_name) > 60:
+            display_name = display_name[:57] + "..."
 
-    # 构建卡片 JSON（飞书卡片 Schema 2.0）
-    card = {
-        "config": {
-            "wide_screen_mode": True
-        },
-        "header": {
-            "title": {
-                "tag": "plain_text",
-                "content": f"📋 2026年人社补贴政策追踪（{region}）"
-            }
-        },
-        "elements": [
-            {
-                "tag": "table",
-                "columns": [
-                    {"name": "省份", "width": 80},
-                    {"name": "城市", "width": 80},
-                    {"name": "政策名称", "width": 200},
-                    {"name": "截止日期", "width": 120}
-                ],
-                "rows": table_rows,
-                "paginate": True,
-                "page_size": 10
-            },
-            {
-                "tag": "note",
-                "elements": [
-                    {
-                        "tag": "plain_text",
-                        "content": f"📊 共 {len(rows)} 条政策（仅展示前10条）"
-                    }
-                ]
-            }
-        ]
+        # 构建段落（使用成功结构，不带外层post）
+        line_parts = []
+        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
+
+        if link_url:
+            # 链接的显示文本已过滤，href保持不变
+            line_parts.append({"tag": "text", "text": display_name, "href": link_url})
+        else:
+            line_parts.append({"tag": "text", "text": display_name})
+
+        line_parts.append({"tag": "text", "text": f" ⏰ {deadline}"})
+
+        content_blocks.append(line_parts)
+
+        if idx < len(rows_to_send) - 1:
+            content_blocks.append([
+                {"tag": "text", "text": "─────────────────────"}
+            ])
+
+    total = len(rows)
+    footer = f"📊 共 {total} 条政策" + (f"（仅展示前5条）" if total > 5 else "")
+    footer = filter_sensitive(footer)
+    content_blocks.append([
+        {"tag": "text", "text": footer}
+    ])
+
+    # 使用成功结构：直接使用 zh_cn，不带外层 post
+    post_content = {
+        "zh_cn": {
+            "title": filter_sensitive("2026年人社补贴政策追踪报告"),
+            "content": content_blocks
+        }
     }
 
     url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
@@ -218,10 +294,12 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         "Content-Type": "application/json"
     }
 
+    content_str = json.dumps(post_content, ensure_ascii=False)
+
     payload = {
         "receive_id": receive_id,
-        "msg_type": "interactive",  # 🔥 关键：使用 interactive 类型
-        "content": json.dumps(card, ensure_ascii=False)
+        "msg_type": "post",
+        "content": content_str
     }
 
     # 打印完整入参（脱敏）
@@ -238,7 +316,7 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         print(f"  ❌ 发送失败: {resp.text}")
         resp.raise_for_status()
 
-    print(f"  ✅ 卡片消息发送成功，共 {len(rows_to_send)} 条政策")
+    print(f"  ✅ 富文本消息发送成功，共 {len(rows_to_send)} 条政策")
 
 
 def main():
@@ -263,8 +341,8 @@ def main():
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
-    print("\n4. 发送消息卡片...")
-    send_card_message(token, RECEIVE_OPEN_ID_POLICY, rows, "西南四省")
+    print("\n4. 发送富文本消息...")
+    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows, "西南四省")
 
     print("\n✅ 政策追踪报告发送完成！")
 
