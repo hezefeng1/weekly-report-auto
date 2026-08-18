@@ -10,6 +10,34 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
+# 城市官网首页映射（根据常见地址，如有误请调整）
+CITY_WEBSITE = {
+    "成都市": "http://cdhrss.chengdu.gov.cn",
+    "绵阳市": "http://rsj.my.gov.cn",
+    "德阳市": "http://rsj.deyang.gov.cn",
+    "泸州市": "http://rsj.luzhou.gov.cn",
+    "南充市": "http://rsj.nanchong.gov.cn",
+    "宜宾市": "http://rsj.yibin.gov.cn",
+    "达州市": "http://rsj.dazhou.gov.cn",
+    "广安市": "http://rsj.guang-an.gov.cn",
+    "眉山市": "http://rsj.ms.gov.cn",
+    "自贡市": "http://rsj.zg.gov.cn",          # 或 rsj.zigong.gov.cn
+    "乐山市": "http://rsj.leshan.gov.cn",
+    "广元市": "http://rsj.cngy.gov.cn",
+    "资阳市": "http://rsj.ziyang.gov.cn",
+    "西昌市": "http://rsj.xichang.gov.cn",
+    "重庆市": "http://rlsbj.cq.gov.cn",
+    "昆明市": "http://rsj.km.gov.cn",
+    "曲靖市": "http://rsj.qj.gov.cn",
+    "德宏傣族景颇族自治州": "http://rsj.dh.gov.cn",
+    "贵阳市": "http://rsj.guiyang.gov.cn",
+    "遵义市": "http://rsj.zunyi.gov.cn",
+    "毕节市": "http://rsj.bijie.gov.cn",
+    "六盘水市": "http://rsj.gzlps.gov.cn",
+    "黔东南苗族侗族自治州": "http://rsj.qdn.gov.cn",
+    "黔西南布依族苗族自治州": "http://rsj.qxn.gov.cn",
+}
+
 
 def generate_policy_report():
     today = datetime.now().strftime("%Y年%m月%d日")
@@ -119,12 +147,13 @@ def parse_markdown_table_to_list(markdown_text):
     lines = markdown_text.strip().split('\n')
     if len(lines) < 2:
         return None
-    # 过滤掉分隔行（包含 '---'）
+    # 过滤掉分隔行（包含 --- 的行）
     data_lines = [line for line in lines if '---' not in line]
     if len(data_lines) < 2:
         return None
     rows = []
     for line in data_lines[1:]:  # 跳过表头
+        # 按 | 分割，去除首尾空
         cells = [c.strip() for c in line.split('|') if c.strip()]
         if cells:
             rows.append(cells)
@@ -132,21 +161,35 @@ def parse_markdown_table_to_list(markdown_text):
 
 
 def extract_link(text):
+    """提取 Markdown 链接（但我们现在不用它）"""
     match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
     if match:
         return match.group(1), match.group(2)
     return text, None
 
 
+def get_website_by_city(city):
+    """根据城市名返回官网首页链接"""
+    # 尝试精确匹配，若没有则尝试去掉“市”等后缀
+    if city in CITY_WEBSITE:
+        return CITY_WEBSITE[city]
+    # 尝试去掉“市”后匹配
+    city_simple = city.replace("市", "")
+    for key in CITY_WEBSITE:
+        if key.replace("市", "") == city_simple:
+            return CITY_WEBSITE[key]
+    # 若仍找不到，返回默认搜索链接
+    return f"https://www.baidu.com/s?wd={city} 人社局"
+
+
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息 - 极简稳定版"""
+    """发送飞书富文本消息 - 官网首页链接版"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 限制发送条数，避免超限
-    max_send = 15
-    rows_to_send = rows[:max_send]
+    # 只发送前10条（避免体积过大，且官网首页链接很短）
+    rows_to_send = rows[:10]
 
     # 构建 content 二维数组
     content_blocks = []
@@ -156,45 +199,49 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）"}
     ])
     content_blocks.append([
-        {"tag": "text", "text": " "}
+        {"tag": "text", "text": " "}  # 空行
     ])
 
     # 逐条政策
     for idx, row in enumerate(rows_to_send):
-        # 安全获取字段
-        province = row[0] if len(row) > 0 else "未知"
-        city = row[1] if len(row) > 1 else "未知"
-        policy_name_raw = row[2] if len(row) > 2 else "政策名称缺失"
-        # 截止日期可能在索引5，也可能在其他位置，我们尝试取第5个或最后一个
-        if len(row) > 5:
-            deadline = row[5]
-        else:
-            # 如果行数少于6，尝试取最后一个非空值作为截止日期
-            deadline = row[-1] if len(row) > 3 else "详见原文"
+        # 安全提取字段，row可能有5~7列
+        if len(row) < 5:
+            continue
+        province = row[0] if len(row) > 0 else ""
+        city = row[1] if len(row) > 1 else ""
+        policy_name_raw = row[2] if len(row) > 2 else ""
+        # 核心申请条件、补贴标准我们忽略
+        deadline = row[5] if len(row) > 5 else "详见原文"
 
-        display_name, link_url = extract_link(policy_name_raw)
+        # 提取政策名称（去掉Markdown链接格式，只留纯文本）
+        display_name, _ = extract_link(policy_name_raw)
+        if not display_name:
+            display_name = policy_name_raw
 
-        # 省份+城市
+        # 获取该城市的官网首页
+        website = get_website_by_city(city)
+
+        # 段落：省份+城市
         content_blocks.append([
             {"tag": "text", "text": f"📍 {province}｜{city}"}
         ])
 
-        # 政策名称（链接或纯文本）
-        if link_url:
-            content_blocks.append([
-                {"tag": "a", "text": display_name, "href": link_url}
-            ])
-        else:
-            content_blocks.append([
-                {"tag": "text", "text": display_name}
-            ])
+        # 段落：政策名称（纯文本，不加链接）
+        content_blocks.append([
+            {"tag": "text", "text": display_name}
+        ])
 
-        # 截止日期
+        # 段落：官网首页链接
+        content_blocks.append([
+            {"tag": "a", "text": "🏢 当地人社局官网", "href": website}
+        ])
+
+        # 段落：截止日期
         content_blocks.append([
             {"tag": "text", "text": f"⏰ 截止：{deadline}"}
         ])
 
-        # 分隔线（除最后一条）
+        # 分隔线（除了最后一条）
         if idx < len(rows_to_send) - 1:
             content_blocks.append([
                 {"tag": "text", "text": "─────────────────────"}
@@ -202,9 +249,9 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     # 底部统计
     total = len(rows)
-    if total > max_send:
+    if total > 10:
         content_blocks.append([
-            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前{max_send}条）"}
+            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前10条）"}
         ])
     else:
         content_blocks.append([
@@ -227,12 +274,14 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "Content-Type": "application/json"
     }
 
+    # 🔥 content 必须为 JSON 字符串
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
         "content": json.dumps(post_content, ensure_ascii=False)
     }
 
+    # 调试信息
     print(f"  📊 消息体积：{len(json.dumps(payload, ensure_ascii=False))} 字节")
     print(f"  📤 发送 {len(rows_to_send)} 条政策")
 
@@ -261,7 +310,7 @@ def main():
         print("  ❌ 未能解析出表格数据")
         return
 
-    print(f"  ✅ 解析成功，表头: {len(rows[0]) if rows else 0} 列，数据: {len(rows)} 行")
+    print(f"  ✅ 解析成功，表头: {len(rows[0])} 列，数据: {len(rows)} 行")
 
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
