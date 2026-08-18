@@ -10,7 +10,7 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-# ==================== 屏蔽词规则 ====================
+# ==================== 屏蔽词规则（与富文本版相同） ====================
 SENSITIVE_RULES_RAW = """
 发放,http
 贴 补
@@ -211,8 +211,8 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 限制最多10行，卡片表格不宜太多
-    rows_to_send = rows[:10]
+    # 只取前5条，避免卡片超长
+    rows_to_send = rows[:5]
 
     # 构建表格行
     table_rows = []
@@ -224,7 +224,7 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         policy_name_raw = row[2] if len(row) > 2 else ""
         deadline = row[5] if len(row) > 5 else "详见原文"
 
-        # 过滤屏蔽词（纯文本部分）
+        # 过滤屏蔽词
         province = filter_sensitive(province)
         city = filter_sensitive(city)
         deadline = filter_sensitive(deadline)
@@ -233,52 +233,47 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         if not display_name:
             display_name = policy_name_raw
         display_name = filter_sensitive(display_name)
-        if len(display_name) > 30:
-            display_name = display_name[:27] + "..."
+        if len(display_name) > 40:
+            display_name = display_name[:37] + "..."
 
-        # 表格每一行数据
-        row_cells = [
-            {"text": province},
-            {"text": city},
-            {"text": display_name, "href": link_url} if link_url else {"text": display_name},
-            {"text": deadline}
-        ]
-        table_rows.append(row_cells)
+        # 每个单元格是一个对象，包含 text 和可选的 href
+        cell1 = {"text": province}
+        cell2 = {"text": city}
+        if link_url:
+            cell3 = {"text": display_name, "href": link_url}
+        else:
+            cell3 = {"text": display_name}
+        cell4 = {"text": deadline}
+        table_rows.append([cell1, cell2, cell3, cell4])
 
     if not table_rows:
         print("  ⚠️ 没有有效的政策数据可展示")
         return
 
-    # ✅ 修正后的卡片结构：扁平化，顶层直接是 config 和 elements
+    # 构建卡片（极简结构，无header）
     card = {
         "config": {
             "wide_screen_mode": True
-        },
-        "header": {
-            "title": {
-                "tag": "plain_text",
-                "content": f"📋 2026年人社补贴政策追踪（{region}）"
-            }
         },
         "elements": [
             {
                 "tag": "table",
                 "columns": [
-                    {"name": "省份", "width": 80},
-                    {"name": "城市", "width": 80},
-                    {"name": "政策名称", "width": 200},
-                    {"name": "截止日期", "width": 120}
+                    {"name": "省份", "width": 60},
+                    {"name": "城市", "width": 60},
+                    {"name": "政策名称", "width": 220},
+                    {"name": "截止日期", "width": 100}
                 ],
                 "rows": table_rows,
                 "paginate": True,
-                "page_size": 10
+                "page_size": 5
             },
             {
                 "tag": "note",
                 "elements": [
                     {
                         "tag": "plain_text",
-                        "content": f"📊 共 {len(rows)} 条政策（仅展示前10条）"
+                        "content": f"📊 共 {len(rows)} 条政策（仅展示前5条）"
                     }
                 ]
             }
@@ -291,20 +286,21 @@ def send_card_message(access_token, receive_id, rows, region="西南四省"):
         "Content-Type": "application/json"
     }
 
+    # content 必须是 JSON 字符串
+    content_str = json.dumps(card, ensure_ascii=False)
+
+    # 打印卡片 JSON 供调试
+    print("\n" + "=" * 60)
+    print("📤 卡片 JSON（脱敏 receive_id）:")
+    print("=" * 60)
+    print(content_str)
+    print("=" * 60 + "\n")
+
     payload = {
         "receive_id": receive_id,
         "msg_type": "interactive",
-        "content": json.dumps(card, ensure_ascii=False)
+        "content": content_str
     }
-
-    # 打印完整入参（脱敏）
-    print("\n" + "=" * 60)
-    print("📤 完整入参（脱敏 receive_id）:")
-    print("=" * 60)
-    debug_payload = payload.copy()
-    debug_payload["receive_id"] = "***"
-    print(json.dumps(debug_payload, ensure_ascii=False, indent=2))
-    print("=" * 60 + "\n")
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
