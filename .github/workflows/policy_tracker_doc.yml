@@ -1,9 +1,9 @@
-name: Policy Tracker - 西南四省（云文档版）
+name: Policy Tracker
 
 on:
   schedule:
-    - cron: '0 11 * * 1'   # 每周一上午11:00（北京时间）运行
-  workflow_dispatch:        # 允许手动触发
+    - cron: '0 11 * * 1'
+  workflow_dispatch:
 
 jobs:
   run:
@@ -27,4 +27,4 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_POLICY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: python scripts/policy_tracker_doc.py
+        run: python scripts/policy_tracker.py
