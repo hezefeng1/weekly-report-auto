@@ -145,14 +145,15 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息（极简版，只发5条）"""
+    """发送飞书富文本消息（极简版）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return
 
-    # 🔥 只发5条，最简单最安全
+    # 只发5条
     rows_to_send = rows[:5]
 
+    # 构建富文本内容（直接使用对象，不要 json.dumps）
     content_elements = []
 
     # 标题
@@ -171,9 +172,8 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
         display_name, link_url = extract_link(policy_name_raw)
 
-        # 政策名称（如果是链接则用 a 标签，否则用纯文本）
+        # 🔥 关键修复：a 标签的 text 必须是纯文本，且整行结构要正确
         if link_url:
-            # 注意：a 标签的 text 必须是纯文本，不能带 emoji
             line_parts = [
                 {"tag": "text", "text": f"📍 {province}｜{city}  "},
                 {"tag": "a", "text": display_name, "href": link_url},
@@ -185,13 +185,11 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
             ]
 
         content_elements.append(line_parts)
-
-        # 分隔线
         content_elements.append([
             {"tag": "text", "text": "─────────────────────"}
         ])
 
-    # 末尾信息
+    # 末尾
     total_count = len(rows)
     if total_count > 5:
         content_elements.append([
@@ -202,6 +200,16 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
             {"tag": "text", "text": f"📊 共 {total_count} 条政策"}
         ])
 
+    # 🔥 核心修复：content 直接是对象，不要 json.dumps
+    post_content = {
+        "post": {
+            "zh_cn": {
+                "title": "2026年人社补贴政策追踪报告",
+                "content": content_elements
+            }
+        }
+    }
+
     send_url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -211,23 +219,16 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
-        "content": json.dumps({
-            "post": {
-                "zh_cn": {
-                    "title": "2026年人社补贴政策追踪报告",
-                    "content": content_elements
-                }
-            }
-        })
+        "content": post_content  # 🔥 直接传对象，不要 json.dumps
     }
 
-    # 打印消息体用于调试
+    # 调试打印
     msg_size = len(json.dumps(payload, ensure_ascii=False))
     print(f"  📊 消息体积：{msg_size} 字节")
 
-    # 打印消息内容预览（前200字符）
-    content_preview = json.dumps(payload, ensure_ascii=False)[:200]
-    print(f"  📝 内容预览：{content_preview}...")
+    # 打印 payload 的结构（前300字符）
+    payload_preview = json.dumps(payload, ensure_ascii=False)[:300]
+    print(f"  📝 Payload 预览：{payload_preview}...")
 
     resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
