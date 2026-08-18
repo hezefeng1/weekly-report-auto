@@ -355,7 +355,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
     md_lines.append("|------|------|----------|--------------|----------------|----------|")
 
     policy_count = 0
-    max_policies = 25
+    max_policies = len(rows)
     for row in rows:
         if policy_count >= max_policies:
             break
