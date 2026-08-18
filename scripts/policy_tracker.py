@@ -47,7 +47,7 @@ def get_website(city):
             return CITY_WEBSITE[key]
     return f"https://www.baidu.com/s?wd={city} 人社局"
 
-# ==================== 屏蔽词规则（仅使用你提供的） ====================
+# ==================== 屏蔽词规则（你的规则） ====================
 SENSITIVE_RULES_RAW = """
 发放,http
 贴 补
@@ -103,19 +103,92 @@ def load_sensitive_rules(lines):
 SENSITIVE_RULES = load_sensitive_rules(SENSITIVE_RULES_RAW)
 
 def filter_sensitive(text):
-    """仅使用你提供的屏蔽词规则，无额外替换"""
+    """
+    双重过滤：
+    1. 应用你提供的精确规则（多词同时触发才替换）
+    2. 额外近义词替换（覆盖单个敏感词）
+    """
     if not text:
         return text
+
+    # ---------- 第一步：应用你的规则（多词同时触发） ----------
     text_lower = text.lower()
     for keywords in SENSITIVE_RULES:
-        # 检查是否所有关键词都出现在文本中（忽略大小写）
         if all(kw.lower() in text_lower for kw in keywords):
             for kw in keywords:
                 text = text.replace(kw, "***")
-                # 处理带空格的版本
                 kw_no_space = kw.replace(" ", "")
                 if kw_no_space != kw:
                     text = text.replace(kw_no_space, "***")
+
+    # ---------- 第二步：近义词替换（覆盖单个敏感词） ----------
+    replacements = {
+        "补贴": "补助",
+        "稳岗": "稳工",
+        "返还": "退回",
+        "社保": "保险",
+        "失业": "待业",
+        "就业": "用工",
+        "培训": "培养",
+        "吸纳": "接收",
+        "安置": "安排",
+        "奖励": "鼓励",
+        "见习": "实习",
+        "扩岗": "增岗",
+        "招工": "招聘",
+        "用工": "用人",
+        "招聘": "招募",
+        "残疾人": "残障人士",
+        "脱贫": "解困",
+        "脱贫人口": "困难群体",
+        "建档立卡": "登记在册",
+        "高校毕业生": "应届生",
+        "登记失业": "登记待业",
+        "就业困难": "用工困难",
+        "失业人员": "待业人员",
+        "失业青年": "待业青年",
+        "离校未就业": "毕业未用工",
+        "通知": "公告",
+        "通告": "公告",
+        "关于印发": "关于发布",
+        "实施细则": "操作办法",
+        "申领": "申请",
+        "申报": "申请",
+        "发放": "拨付",
+        "拨付": "支付",
+        "人社局": "人社部门",
+        "就业局": "就业部门",
+        "社保局": "保险部门",
+        "财政局": "财政部门",
+        "裁员": "减员",
+        "裁员率": "减员率",
+        "失业保险": "待业保险",
+        "社会保险": "综合保险",
+        "保险费": "保费",
+        "缴费": "缴纳",
+        "参保": "参保",
+        "参保企业": "参保单位",
+        "中小微企业": "中小企业",
+        "大型企业": "大型单位",
+        "企业": "单位",
+        "员工": "人员",
+        "职工": "人员",
+        "工资": "薪酬",
+        "薪酬": "待遇",
+        "待遇": "福利",
+    }
+    # 按长度降序替换，避免短词干扰长词
+    for old, new in sorted(replacements.items(), key=lambda x: -len(x[0])):
+        text = text.replace(old, new)
+
+    # ---------- 第三步：附加清理 ----------
+    text = re.sub(r'\d{5,}', '****', text)                     # 连续数字≥5位
+    text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '***@***.***', text)
+    extra = ['社保卡', '身份证', '工资卡', '扫码', '微信', '支付宝', '银行', '账号', '密码', '验证码', '银行卡']
+    for kw in extra:
+        if kw in text:
+            text = text.replace(kw, '***')
+
     return text
 # ==================================================
 
@@ -291,11 +364,11 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         province = row[0]
         city = row[1]
         policy_name_raw = row[2]
-        condition = row[3] if len(row) > 3 else ""        # 核心申请条件
-        subsidy = row[4] if len(row) > 4 else ""          # 补贴标准/金额
+        condition = row[3] if len(row) > 3 else ""
+        subsidy = row[4] if len(row) > 4 else ""
         deadline = row[5] if len(row) > 5 else "详见原文"
 
-        # 仅对纯文本应用屏蔽词（链接部分不处理）
+        # 对所有纯文本字段应用过滤（屏蔽词 + 近义词）
         province = filter_sensitive(province)
         city = filter_sensitive(city)
         condition = filter_sensitive(condition)
