@@ -145,21 +145,22 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息（只发前8条，确保不超限）"""
+    """发送飞书富文本消息（极简版，只发5条）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
         return
 
-    # 🔥 只取前8条，确保消息体积不超限
-    rows_to_send = rows[:8]
+    # 🔥 只发5条，最简单最安全
+    rows_to_send = rows[:5]
 
     content_elements = []
 
+    # 标题
     content_elements.append([
-        {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）\n\n"}
+        {"tag": "text", "text": "📋 2026年人社补贴政策追踪（西南四省）\n\n"}
     ])
 
-    policy_count = 0
+    # 每条政策
     for row in rows_to_send:
         if len(row) < 7:
             continue
@@ -170,34 +171,38 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
         display_name, link_url = extract_link(policy_name_raw)
 
-        line_parts = []
-        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
-
+        # 政策名称（如果是链接则用 a 标签，否则用纯文本）
         if link_url:
-            line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
+            # 注意：a 标签的 text 必须是纯文本，不能带 emoji
+            line_parts = [
+                {"tag": "text", "text": f"📍 {province}｜{city}  "},
+                {"tag": "a", "text": display_name, "href": link_url},
+                {"tag": "text", "text": f"  ⏰ {deadline}"}
+            ]
         else:
-            line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
-
-        line_parts.append({"tag": "text", "text": f"\n⏰ 截止：{deadline}"})
+            line_parts = [
+                {"tag": "text", "text": f"📍 {province}｜{city}  {display_name}  ⏰ {deadline}"}
+            ]
 
         content_elements.append(line_parts)
-        policy_count += 1
 
+        # 分隔线
         content_elements.append([
-            {"tag": "text", "text": "\n─────────────────────\n"}
+            {"tag": "text", "text": "─────────────────────"}
         ])
 
-    # 如果总政策数超过8条，加一个提示
-    if len(rows) > 8:
+    # 末尾信息
+    total_count = len(rows)
+    if total_count > 5:
         content_elements.append([
-            {"tag": "text", "text": f"\n📊 共 {len(rows)} 条政策（仅展示前8条）"}
+            {"tag": "text", "text": f"📊 共 {total_count} 条政策（仅展示前5条）"}
         ])
     else:
         content_elements.append([
-            {"tag": "text", "text": f"\n📊 共 {policy_count} 条政策"}
+            {"tag": "text", "text": f"📊 共 {total_count} 条政策"}
         ])
 
-    send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+    send_url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -209,23 +214,27 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "content": json.dumps({
             "post": {
                 "zh_cn": {
-                    "title": f"2026年人社补贴政策追踪（{region}）",
+                    "title": "2026年人社补贴政策追踪报告",
                     "content": content_elements
                 }
             }
         })
     }
 
-    # 调试：打印消息大小
+    # 打印消息体用于调试
     msg_size = len(json.dumps(payload, ensure_ascii=False))
     print(f"  📊 消息体积：{msg_size} 字节")
+
+    # 打印消息内容预览（前200字符）
+    content_preview = json.dumps(payload, ensure_ascii=False)[:200]
+    print(f"  📝 内容预览：{content_preview}...")
 
     resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
         print(f"  ❌ 发送消息失败: {resp.text}")
         resp.raise_for_status()
 
-    print(f"  ✅ 富文本消息发送成功，共 {policy_count} 条政策")
+    print(f"  ✅ 富文本消息发送成功，共 {len(rows_to_send)} 条政策")
 
 
 def main():
