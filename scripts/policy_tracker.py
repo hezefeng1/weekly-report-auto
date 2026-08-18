@@ -138,18 +138,16 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送富文本消息 - 完全复制API调试台成功的结构"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 只发前3条，确保极简且与调试台一致
+    # 只发前3条
     rows_to_send = rows[:3]
 
-    # 构建 content 二维数组 - 与API调试台成功结构完全一致
     content_blocks = []
 
-    # 标题行（一个段落，包含多个 text）
+    # 标题
     content_blocks.append([
         {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）"}
     ])
@@ -159,7 +157,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         {"tag": "text", "text": " "}
     ])
 
-    # 逐条政策 - 每条政策合并到一个段落
+    # 逐条政策
     for idx, row in enumerate(rows_to_send):
         if len(row) < 5:
             continue
@@ -168,41 +166,31 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         policy_name_raw = row[2] if len(row) > 2 else ""
         deadline = row[5] if len(row) > 5 else "详见原文"
 
-        # 提取纯文本名称
         display_name, link_url = extract_link(policy_name_raw)
         if not display_name:
             display_name = policy_name_raw
-
-        # 截断过长的名称
         if len(display_name) > 50:
             display_name = display_name[:47] + "..."
 
-        # 🔥 关键：每条政策作为一个段落（一个子数组），包含多个元素
+        # 每个段落包含多个元素
         line_parts = []
-
-        # 省份+城市
         line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
 
-        # 政策名称（根据是否有链接决定使用 text 还是 a 标签）
+        # 🔥 使用标准 a 标签代替 text 带 href
         if link_url:
-            # 使用 text 带 href（与调试台成功示例一致）
-            line_parts.append({"tag": "text", "text": display_name, "href": link_url})
+            line_parts.append({"tag": "a", "text": display_name, "href": link_url})
         else:
             line_parts.append({"tag": "text", "text": display_name})
 
-        # 截止日期
         line_parts.append({"tag": "text", "text": f" ⏰ {deadline}"})
 
-        # 添加到 content_blocks
         content_blocks.append(line_parts)
 
-        # 分隔线（除了最后一条）
         if idx < len(rows_to_send) - 1:
             content_blocks.append([
                 {"tag": "text", "text": "─────────────────────"}
             ])
 
-    # 底部统计
     total = len(rows)
     if total > 3:
         content_blocks.append([
@@ -213,7 +201,6 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
             {"tag": "text", "text": f"📊 共 {total} 条政策"}
         ])
 
-    # 构造 post 内容
     post_content = {
         "post": {
             "zh_cn": {
@@ -229,18 +216,16 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "Content-Type": "application/json"
     }
 
-    # 将 post_content 序列化为 JSON 字符串
     content_str = json.dumps(post_content, ensure_ascii=False)
-    
+
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
-        "content": content_str
+        "content": content_str,
+        "uuid": "a0d69e20-1dd1-458b-k525-dfeca4015204"  # 可选，但加上更完整
     }
 
-    # ============================================================
-    # 🔥 完整打印入参和 content 字段（方便复制到 API 调试台）
-    # ============================================================
+    # 打印完整入参和 content
     print("\n" + "=" * 60)
     print("📤 完整入参（脱敏 receive_id）:")
     print("=" * 60)
@@ -249,7 +234,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
     print(json.dumps(debug_payload, ensure_ascii=False, indent=2))
     print("=" * 60)
 
-    print("\n📝 content 字段原始值（可直接复制粘贴到API调试台的 content 输入框）:")
+    print("\n📝 content 字段原始值（可直接复制到API调试台）:")
     print("=" * 60)
     print(content_str)
     print("=" * 60 + "\n")
