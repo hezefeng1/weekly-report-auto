@@ -138,18 +138,18 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送富文本消息 - 使用与API调试台完全一致的结构"""
+    """发送富文本消息 - 完全复制API调试台成功的结构"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 只发前5条，确保极简
-    rows_to_send = rows[:5]
+    # 只发前3条，确保极简且与调试台一致
+    rows_to_send = rows[:3]
 
-    # 构建 content 二维数组
+    # 构建 content 二维数组 - 与API调试台成功结构完全一致
     content_blocks = []
 
-    # 标题
+    # 标题行（一个段落，包含多个 text）
     content_blocks.append([
         {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）"}
     ])
@@ -159,7 +159,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         {"tag": "text", "text": " "}
     ])
 
-    # 逐条政策
+    # 逐条政策 - 每条政策合并到一个段落
     for idx, row in enumerate(rows_to_send):
         if len(row) < 5:
             continue
@@ -169,27 +169,32 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         deadline = row[5] if len(row) > 5 else "详见原文"
 
         # 提取纯文本名称
-        display_name, _ = extract_link(policy_name_raw)
+        display_name, link_url = extract_link(policy_name_raw)
         if not display_name:
             display_name = policy_name_raw
-        # 截断过长的名称（避免JSON过长）
-        if len(display_name) > 60:
-            display_name = display_name[:57] + "..."
 
-        # 段落1：省份+城市
-        content_blocks.append([
-            {"tag": "text", "text": f"📍 {province}｜{city}"}
-        ])
+        # 截断过长的名称
+        if len(display_name) > 50:
+            display_name = display_name[:47] + "..."
 
-        # 段落2：政策名称
-        content_blocks.append([
-            {"tag": "text", "text": f"   {display_name}"}
-        ])
+        # 🔥 关键：每条政策作为一个段落（一个子数组），包含多个元素
+        line_parts = []
 
-        # 段落3：截止日期
-        content_blocks.append([
-            {"tag": "text", "text": f"   ⏰ 截止：{deadline}"}
-        ])
+        # 省份+城市
+        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
+
+        # 政策名称（根据是否有链接决定使用 text 还是 a 标签）
+        if link_url:
+            # 使用 text 带 href（与调试台成功示例一致）
+            line_parts.append({"tag": "text", "text": display_name, "href": link_url})
+        else:
+            line_parts.append({"tag": "text", "text": display_name})
+
+        # 截止日期
+        line_parts.append({"tag": "text", "text": f" ⏰ {deadline}"})
+
+        # 添加到 content_blocks
+        content_blocks.append(line_parts)
 
         # 分隔线（除了最后一条）
         if idx < len(rows_to_send) - 1:
@@ -199,16 +204,16 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     # 底部统计
     total = len(rows)
-    if total > 5:
+    if total > 3:
         content_blocks.append([
-            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前5条）"}
+            {"tag": "text", "text": f"📊 共 {total} 条政策（仅展示前3条）"}
         ])
     else:
         content_blocks.append([
             {"tag": "text", "text": f"📊 共 {total} 条政策"}
         ])
 
-    # 构造 post 内容（与API调试台完全一致的结构）
+    # 构造 post 内容
     post_content = {
         "post": {
             "zh_cn": {
@@ -224,27 +229,30 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "Content-Type": "application/json"
     }
 
-    # 🔥 content 必须是 JSON 字符串
+    # 将 post_content 序列化为 JSON 字符串
+    content_str = json.dumps(post_content, ensure_ascii=False)
+    
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
-        "content": json.dumps(post_content, ensure_ascii=False)
+        "content": content_str
     }
 
-    # ============================================
-    # 🔥 打印完整入参（脱敏），方便调试
-    # ============================================
+    # ============================================================
+    # 🔥 完整打印入参和 content 字段（方便复制到 API 调试台）
+    # ============================================================
     print("\n" + "=" * 60)
-    print("📤 发送给飞书的完整入参（已脱敏）:")
+    print("📤 完整入参（脱敏 receive_id）:")
     print("=" * 60)
     debug_payload = payload.copy()
-    debug_payload["receive_id"] = "***"  # 脱敏
+    debug_payload["receive_id"] = "***"
     print(json.dumps(debug_payload, ensure_ascii=False, indent=2))
-    print("=" * 60 + "\n")
+    print("=" * 60)
 
-    # 额外打印 content 内部结构（便于核对）
-    print("📝 content 内部结构预览（前500字符）:")
-    print(json.dumps(post_content, ensure_ascii=False, indent=2)[:500] + "...\n")
+    print("\n📝 content 字段原始值（可直接复制粘贴到API调试台的 content 输入框）:")
+    print("=" * 60)
+    print(content_str)
+    print("=" * 60 + "\n")
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
