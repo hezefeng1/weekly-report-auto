@@ -103,9 +103,11 @@ def load_sensitive_rules(lines):
 SENSITIVE_RULES = load_sensitive_rules(SENSITIVE_RULES_RAW)
 
 def filter_sensitive(text):
+    """激进过滤，替换所有可能的敏感词为安全词"""
     if not text:
         return text
     text_lower = text.lower()
+    # 先应用规则
     for keywords in SENSITIVE_RULES:
         if all(kw.lower() in text_lower for kw in keywords):
             for kw in keywords:
@@ -113,11 +115,38 @@ def filter_sensitive(text):
                 kw_no_space = kw.replace(" ", "")
                 if kw_no_space != kw:
                     text = text.replace(kw_no_space, "***")
-    # 连续数字≥5位 → 替换为 ****
+    # 额外替换常见敏感词（替换为近义安全词）
+    replacements = {
+        "补贴": "补助",
+        "稳岗": "稳工",
+        "返还": "退回",
+        "社保": "保险",
+        "就业": "用工",
+        "失业": "待业",
+        "培训": "培养",
+        "吸纳": "接收",
+        "安置": "安排",
+        "奖励": "鼓励",
+        "引才": "招才",
+        "见习": "实习",
+        "扩岗": "增岗",
+        "招工": "招聘",
+        "残疾人": "残障人士",
+        "脱贫": "解困",
+        "脱贫人口": "困难群体",
+        "建档立卡": "登记在册",
+        "高校毕业生": "应届生",
+        "登记失业": "登记待业",
+        "就业困难": "用工困难",
+    }
+    for old, new in replacements.items():
+        if old in text:
+            text = text.replace(old, new)
+    # 连续数字≥5位 → 替换
     text = re.sub(r'\d{5,}', '****', text)
     # 邮箱替换
     text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '***@***.***', text)
-    # 额外高频敏感词
+    # 额外敏感词
     extra = ['社保卡', '身份证', '工资卡', '扫码', '微信', '支付宝', '银行', '账号', '密码', '验证码', '银行卡']
     for kw in extra:
         if kw in text:
@@ -127,7 +156,7 @@ def filter_sensitive(text):
 
 
 def generate_policy_report():
-    """调用 DeepSeek API 生成政策追踪报告（修改 prompt，强制输出纯文本政策名称，不带链接）"""
+    """调用 DeepSeek API 生成政策追踪报告，提示词要求输出官网链接"""
     today = datetime.now().strftime("%Y年%m月%d日")
 
     system_prompt = """你是人社政策情报分析AI。
@@ -182,11 +211,11 @@ def generate_policy_report():
 |------|------|
 | 省份 | 政策发布省份 |
 | 城市 | 适用城市（多个用顿号分隔） |
-| 政策名称 | **只写纯文本政策名称，不带任何链接**（如：`关于发放2026年度稳岗返还的通知`） |
+| 政策名称 | 完整政策标题（作为链接文字） |
 | 核心申请条件 | 企业适用条件 |
 | 补贴标准/金额 | 具体金额或比例 |
 | 开放申请及截止日期 | 格式：YYYY-MM-DD |
-| 政策原文链接 | 固定填写 `[政策详情](http://example.com)`（占位，实际不需要） |
+| 政策原文链接 | 可点击的官方政策原文URL |
 
 ## 搜索关键词组合
 
@@ -198,8 +227,7 @@ def generate_policy_report():
 ### 格式要求
 - 只生成一个 Markdown 表格
 - 表格表头：省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 开放申请及截止日期 | 政策原文链接
-- 政策名称列：**只写纯文本，不加任何 Markdown 链接**（因为我们将使用官网首页链接代替）
-- 其他列正常填写
+- 政策名称列：使用 `[政策名称](政策原文URL)` 格式
 
 ### 数据处理规则
 - 省级政策覆盖多个城市：城市列用顿号分隔
@@ -254,62 +282,73 @@ def parse_markdown_table_to_list(markdown_text):
 
 
 def extract_link(text):
-    # 我们不再需要提取链接，但为了兼容保留
+    match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
+    if match:
+        return match.group(1), match.group(2)
     return text, None
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
+    """发送飞书富文本消息（带表格样式的文本）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    rows_to_send = rows[:10]  # 只发前10条
+    # 只取前10条
+    rows_to_send = rows[:10]
 
-    content_blocks = []
-    title_text = filter_sensitive(f"📋 2026年人社补贴政策追踪（{region}）")
-    content_blocks.append([{"tag": "text", "text": title_text}])
-    content_blocks.append([{"tag": "text", "text": " "}])
+    # 构建纯文本表格内容（Markdown 表格语法）
+    table_lines = []
+    table_lines.append("| 省份 | 城市 | 政策名称 | 截止日期 |")
+    table_lines.append("|------|------|----------|----------|")
 
-    for idx, row in enumerate(rows_to_send):
+    for row in rows_to_send:
         if len(row) < 5:
             continue
         province = row[0] if len(row) > 0 else ""
         city = row[1] if len(row) > 1 else ""
-        policy_name = row[2] if len(row) > 2 else ""
+        policy_name_raw = row[2] if len(row) > 2 else ""
         deadline = row[5] if len(row) > 5 else "详见原文"
 
         # 过滤屏蔽词
         province = filter_sensitive(province)
         city = filter_sensitive(city)
-        policy_name = filter_sensitive(policy_name)
         deadline = filter_sensitive(deadline)
 
-        if len(policy_name) > 60:
-            policy_name = policy_name[:57] + "..."
+        # 提取政策名称（纯文本）
+        display_name, _ = extract_link(policy_name_raw)
+        if not display_name:
+            display_name = policy_name_raw
+        display_name = filter_sensitive(display_name)
+        if len(display_name) > 30:
+            display_name = display_name[:27] + "..."
 
+        # 获取官网首页链接（用于显示）
         website = get_website(city)
+        # 在表格中显示为链接
+        policy_cell = f"[{display_name}]({website})"
 
-        line_parts = []
-        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
-        line_parts.append({"tag": "text", "text": policy_name})
-        line_parts.append({"tag": "a", "text": "官网首页", "href": website})
-        line_parts.append({"tag": "text", "text": f" ⏰ {deadline}"})
-
-        content_blocks.append(line_parts)
-
-        if idx < len(rows_to_send) - 1:
-            content_blocks.append([
-                {"tag": "text", "text": "─────────────────────"}
-            ])
+        table_lines.append(f"| {province} | {city} | {policy_cell} | {deadline} |")
 
     total = len(rows)
-    footer = f"📊 共 {total} 条政策" + (f"（仅展示前 {len(rows_to_send)} 条）" if total > len(rows_to_send) else "")
-    footer = filter_sensitive(footer)
-    content_blocks.append([{"tag": "text", "text": footer}])
+    if total > 10:
+        table_lines.append(f"\n📊 共 {total} 条政策（仅展示前10条）")
+    else:
+        table_lines.append(f"\n📊 共 {total} 条政策")
 
+    table_text = "\n".join(table_lines)
+
+    # 构造富文本内容：每个段落是一个 text 块
+    content_blocks = [
+        [{"tag": "text", "text": "📋 2026年人社补贴政策追踪（西南四省）"}],
+        [{"tag": "text", "text": " "}],
+        [{"tag": "text", "text": table_text}]
+    ]
+
+    # 使用成功结构：{"zh_cn": {...}}
     post_content = {
         "zh_cn": {
-            "title": filter_sensitive("2026年人社补贴政策追踪报告"),
+            "title": "2026年人社补贴政策追踪报告",
             "content": content_blocks
         }
     }
@@ -331,7 +370,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
     resp = requests.post(url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
-        print(f"  ❌ 发送消息失败: {resp.text}")
+        print(f"  ❌ 发送失败: {resp.text}")
         resp.raise_for_status()
 
     print(f"  ✅ 富文本消息发送成功，共 {len(rows_to_send)} 条政策")
