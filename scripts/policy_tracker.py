@@ -2,7 +2,7 @@ import os
 import requests
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from common.feishu import get_tenant_access_token
 
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
@@ -136,59 +136,88 @@ def parse_markdown_table_to_list(markdown_text):
     return rows
 
 
-def extract_link(text):
-    """提取 Markdown 链接"""
-    match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
-    if match:
-        return match.group(1), match.group(2)
-    return text, None
+def create_feishu_doc(access_token, title, content_md):
+    """创建飞书云文档"""
+    # 1. 创建文档
+    create_url = "https://open.feishu.cn/open-apis/docx/v1/documents"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    create_payload = {
+        "title": title
+    }
+    resp = requests.post(create_url, headers=headers, json=create_payload, timeout=30)
+    if resp.status_code != 200:
+        print(f"  ❌ 创建文档失败: {resp.text}")
+        return None
+
+    doc_data = resp.json()
+    doc_id = doc_data["data"]["document"]["document_id"]
+
+    # 2. 添加内容（将 Markdown 表格转换为飞书文档块）
+    blocks = []
+    lines = content_md.strip().split('\n')
+    
+    # 添加标题块
+    blocks.append({
+        "block_id": "",
+        "block_type": 1,  # 标题
+        "heading": {
+            "elements": [{"text_run": {"content": title, "text_element_style": {}}}]
+        }
+    })
+
+    # 逐行处理表格内容
+    for line in lines:
+        if line.strip().startswith('|'):
+            # 表格行 -> 转为普通文本
+            cells = [c.strip() for c in line.split('|') if c.strip()]
+            if cells:
+                # 检查是否是表头分隔行
+                if all('---' in c for c in cells):
+                    continue
+                text_content = " | ".join(cells)
+                blocks.append({
+                    "block_id": "",
+                    "block_type": 2,  # 文本
+                    "text": {
+                        "elements": [{"text_run": {"content": text_content + "\n", "text_element_style": {}}}]
+                    }
+                })
+        elif line.strip():
+            # 非表格行，作为普通文本
+            blocks.append({
+                "block_id": "",
+                "block_type": 2,
+                "text": {
+                    "elements": [{"text_run": {"content": line.strip() + "\n", "text_element_style": {}}}]
+                }
+            })
+
+    # 添加块到文档
+    add_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/blocks"
+    for block in blocks:
+        add_resp = requests.post(add_url, headers=headers, json=block, timeout=30)
+        if add_resp.status_code != 200:
+            print(f"  ⚠️ 添加内容块失败: {add_resp.text}")
+
+    return doc_id
 
 
-def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息"""
-    if not receive_id or receive_id == "":
-        print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置，请设置 GitHub Secret")
-        return
+def send_doc_link_message(access_token, receive_id, doc_id, policy_count):
+    """发送包含文档链接的飞书消息"""
+    doc_url = f"https://open.feishu.cn/document/{doc_id}"
+    
+    content_elements = [
+        [
+            {"tag": "text", "text": "📋 2026年人社补贴政策追踪报告（西南四省）\n\n"},
+            {"tag": "a", "text": "📄 点击查看完整政策表格", "href": doc_url},
+            {"tag": "text", "text": f"\n\n📊 共收录 {policy_count} 条政策\n\n💡 文档链接永久有效，建议收藏"}
+        ]
+    ]
 
-    content_elements = []
-
-    content_elements.append([
-        {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）\n\n"}
-    ])
-
-    policy_count = 0
-    for row in rows:
-        if len(row) < 7:
-            continue
-        province = row[0]
-        city = row[1]
-        policy_name_raw = row[2]
-        deadline = row[5] if len(row) > 5 else "详见原文"
-
-        display_name, link_url = extract_link(policy_name_raw)
-
-        line_parts = []
-        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city}\n"})
-
-        if link_url:
-            line_parts.append({"tag": "a", "text": f"📄 {display_name}", "href": link_url})
-        else:
-            line_parts.append({"tag": "text", "text": f"📄 {display_name}"})
-
-        line_parts.append({"tag": "text", "text": f"\n⏰ {deadline}"})
-
-        content_elements.append(line_parts)
-        policy_count += 1
-
-        content_elements.append([
-            {"tag": "text", "text": "\n─────────────────────\n"}
-        ])
-
-    content_elements.append([
-        {"tag": "text", "text": f"\n📊 共 {policy_count} 条政策"}
-    ])
-
-    send_url = f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+    send_url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -200,7 +229,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "content": json.dumps({
             "post": {
                 "zh_cn": {
-                    "title": f"2026年人社补贴政策追踪（{region}）",
+                    "title": "2026年人社补贴政策追踪报告",
                     "content": content_elements
                 }
             }
@@ -212,7 +241,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         print(f"  ❌ 发送消息失败: {resp.text}")
         resp.raise_for_status()
 
-    print(f"  ✅ 富文本消息发送成功，共 {policy_count} 条政策")
+    print(f"  ✅ 文档链接消息发送成功！文档ID: {doc_id}")
 
 
 def main():
@@ -237,11 +266,15 @@ def main():
     print("\n3. 获取飞书 token...")
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
-    print("\n4. 发送富文本消息...")
-    # 🔥 关键修改：只发送前 15 条，避免飞书消息超长报错 230001
-    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows[:15], "西南四省")
-
-    print("\n✅ 政策追踪报告发送完成！")
+    print("\n4. 创建飞书文档并发送链接...")
+    doc_title = f"2026年人社补贴政策追踪报告（{datetime.now().strftime('%Y-%m-%d')}）"
+    doc_id = create_feishu_doc(token, doc_title, md_content)
+    
+    if doc_id:
+        send_doc_link_message(token, RECEIVE_OPEN_ID_POLICY, doc_id, len(rows))
+        print("\n✅ 政策追踪报告发送完成！")
+    else:
+        print("  ❌ 文档创建失败，请检查飞书权限配置")
 
 
 if __name__ == "__main__":
