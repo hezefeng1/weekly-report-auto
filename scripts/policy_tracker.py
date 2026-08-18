@@ -127,7 +127,7 @@ def filter_sensitive(text):
 
 
 def generate_policy_report():
-    """调用 DeepSeek API 生成政策追踪报告（完整版）"""
+    """调用 DeepSeek API 生成政策追踪报告（修改 prompt，强制输出纯文本政策名称，不带链接）"""
     today = datetime.now().strftime("%Y年%m月%d日")
 
     system_prompt = """你是人社政策情报分析AI。
@@ -182,11 +182,11 @@ def generate_policy_report():
 |------|------|
 | 省份 | 政策发布省份 |
 | 城市 | 适用城市（多个用顿号分隔） |
-| 政策名称 | 完整政策标题（作为链接文字） |
+| 政策名称 | **只写纯文本政策名称，不带任何链接**（如：`关于发放2026年度稳岗返还的通知`） |
 | 核心申请条件 | 企业适用条件 |
 | 补贴标准/金额 | 具体金额或比例 |
 | 开放申请及截止日期 | 格式：YYYY-MM-DD |
-| 政策原文链接 | 可点击的官方政策原文URL |
+| 政策原文链接 | 固定填写 `[政策详情](http://example.com)`（占位，实际不需要） |
 
 ## 搜索关键词组合
 
@@ -198,7 +198,8 @@ def generate_policy_report():
 ### 格式要求
 - 只生成一个 Markdown 表格
 - 表格表头：省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 开放申请及截止日期 | 政策原文链接
-- 政策名称列：使用 `[政策名称](政策原文URL)` 格式
+- 政策名称列：**只写纯文本，不加任何 Markdown 链接**（因为我们将使用官网首页链接代替）
+- 其他列正常填写
 
 ### 数据处理规则
 - 省级政策覆盖多个城市：城市列用顿号分隔
@@ -253,9 +254,7 @@ def parse_markdown_table_to_list(markdown_text):
 
 
 def extract_link(text):
-    match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
-    if match:
-        return match.group(1), match.group(2)
+    # 我们不再需要提取链接，但为了兼容保留
     return text, None
 
 
@@ -276,25 +275,23 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
             continue
         province = row[0] if len(row) > 0 else ""
         city = row[1] if len(row) > 1 else ""
-        policy_name_raw = row[2] if len(row) > 2 else ""
+        policy_name = row[2] if len(row) > 2 else ""
         deadline = row[5] if len(row) > 5 else "详见原文"
 
+        # 过滤屏蔽词
         province = filter_sensitive(province)
         city = filter_sensitive(city)
+        policy_name = filter_sensitive(policy_name)
         deadline = filter_sensitive(deadline)
 
-        display_name, _ = extract_link(policy_name_raw)
-        if not display_name:
-            display_name = policy_name_raw
-        display_name = filter_sensitive(display_name)
-        if len(display_name) > 60:
-            display_name = display_name[:57] + "..."
+        if len(policy_name) > 60:
+            policy_name = policy_name[:57] + "..."
 
         website = get_website(city)
 
         line_parts = []
         line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
-        line_parts.append({"tag": "text", "text": display_name})
+        line_parts.append({"tag": "text", "text": policy_name})
         line_parts.append({"tag": "a", "text": "官网首页", "href": website})
         line_parts.append({"tag": "text", "text": f" ⏰ {deadline}"})
 
