@@ -21,7 +21,7 @@ CITY_WEBSITE = {
     "达州市": "http://rsj.dazhou.gov.cn",
     "广安市": "http://rsj.guang-an.gov.cn",
     "眉山市": "http://rsj.ms.gov.cn",
-    "自贡市": "http://rsj.zg.gov.cn",          # 或 rsj.zigong.gov.cn
+    "自贡市": "http://rsj.zg.gov.cn",
     "乐山市": "http://rsj.leshan.gov.cn",
     "广元市": "http://rsj.cngy.gov.cn",
     "资阳市": "http://rsj.ziyang.gov.cn",
@@ -39,10 +39,8 @@ CITY_WEBSITE = {
 }
 
 def get_website(city):
-    """根据城市名获取官网首页，若未匹配则返回搜索链接"""
     if city in CITY_WEBSITE:
         return CITY_WEBSITE[city]
-    # 尝试去掉“市”后匹配
     city_simple = city.replace("市", "")
     for key in CITY_WEBSITE:
         if key.replace("市", "") == city_simple:
@@ -105,11 +103,8 @@ def load_sensitive_rules(lines):
 SENSITIVE_RULES = load_sensitive_rules(SENSITIVE_RULES_RAW)
 
 def filter_sensitive(text):
-    """过滤屏蔽词 + 手机号/邮箱/连续数字"""
     if not text:
         return text
-
-    # 1. 应用屏蔽词规则
     text_lower = text.lower()
     for keywords in SENSITIVE_RULES:
         if all(kw.lower() in text_lower for kw in keywords):
@@ -118,37 +113,129 @@ def filter_sensitive(text):
                 kw_no_space = kw.replace(" ", "")
                 if kw_no_space != kw:
                     text = text.replace(kw_no_space, "***")
-
-    # 2. 替换连续数字（≥5位），防止手机号/QQ号触发审核
+    # 连续数字≥5位 → 替换为 ****
     text = re.sub(r'\d{5,}', '****', text)
-
-    # 3. 替换邮箱
+    # 邮箱替换
     text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '***@***.***', text)
-
-    # 4. 额外敏感词（飞书审核高频词）
-    extra_keywords = ['社保卡', '身份证', '工资卡', '扫码', '微信', '支付宝', '银行', '账号', '密码', '验证码', '银行卡']
-    for kw in extra_keywords:
+    # 额外高频敏感词
+    extra = ['社保卡', '身份证', '工资卡', '扫码', '微信', '支付宝', '银行', '账号', '密码', '验证码', '银行卡']
+    for kw in extra:
         if kw in text:
             text = text.replace(kw, '***')
-
     return text
 # ==================================================
 
 
 def generate_policy_report():
-    """调用 DeepSeek API 生成政策追踪报告（与你的原代码相同，此处省略，但保留完整）"""
+    """调用 DeepSeek API 生成政策追踪报告（完整版）"""
     today = datetime.now().strftime("%Y年%m月%d日")
-    system_prompt = """（你的原 system_prompt，此处不重复，实际代码中应完整保留）"""
-    # 为了不超字符，这里用 ... 代替，实际使用时请粘贴你原来的 system_prompt
-    # 建议你从原文件复制过来
-    # 下面给出完整内容（因篇幅，此处省略，但最终代码会完整包含）
-    # 你可以直接使用你原来的 generate_policy_report 函数，只需将返回的 content 传给后面的解析即可。
-    # 我这里为了完整性，使用你原来的字符串（请自行复制粘贴）
-    pass
+
+    system_prompt = """你是人社政策情报分析AI。
+
+任务：搜索2026年1月1日之后新发布的企业补贴政策，覆盖四川省、重庆市、云南省、贵州省，输出表格格式政策追踪报告。
+
+## 强制限制
+
+### 绝对禁止
+- 禁止生成任何中间文件
+- 禁止在最终文档中添加总结、建议等额外文字
+- 禁止输出官网首页链接（必须输出政策原文链接）
+- 禁止链接带追踪参数
+- 禁止使用短链接
+- 链接必须指向政策原文页面
+
+### 明确排除的文件类型
+- 标题包含"公示"的所有文件
+- 任何涉及资金分配、补贴发放名单的公示文件
+- "灵活就业社保补贴"相关文件
+- "创业担保贷款"相关文件
+
+### 明确排除的链接类型
+- 官网首页
+- 栏目页
+- 列表页
+- 转发/转载页面
+
+## 城市清单
+
+**四川省**：达州市、德阳市、乐山市、泸州市、眉山市、绵阳市、南充市、西昌市、资阳市、自贡市、成都市、广安市、广元市
+
+**重庆市**：重庆市
+
+**云南省**：德宏傣族景颇族自治州、昆明市、曲靖市
+
+**贵州省**：毕节市、贵阳市、黔东南苗族侗族自治州、遵义市、六盘水市、黔西南布依族苗族自治州
+
+## 搜索要求
+
+### 政策范围
+- 部门来源：人社局、就业局相关政策
+- 补贴类型（针对企业的奖补）：稳岗补贴/稳岗返还、就业补贴、培训补贴、残疾人安置补贴、扩岗补贴、吸纳就业补贴、招工补贴、见习补贴、岗位补贴、引才奖励、返乡就业补贴、跨省就业补助
+
+### 时间范围
+- 发布日期：2026年1月1日之后
+- 截止日期必须晚于当前日期
+
+## 核心信息要素
+
+| 字段 | 要求 |
+|------|------|
+| 省份 | 政策发布省份 |
+| 城市 | 适用城市（多个用顿号分隔） |
+| 政策名称 | 完整政策标题（作为链接文字） |
+| 核心申请条件 | 企业适用条件 |
+| 补贴标准/金额 | 具体金额或比例 |
+| 开放申请及截止日期 | 格式：YYYY-MM-DD |
+| 政策原文链接 | 可点击的官方政策原文URL |
+
+## 搜索关键词组合
+
+对每个城市使用以下关键词搜索（site:.gov.cn）：
+稳岗补贴、稳岗返还、就业补贴、培训补贴、扩岗补贴、吸纳就业补贴、招工补贴、见习补贴、引才奖励、返乡就业补贴、残疾人安置补贴
+
+## 输出格式
+
+### 格式要求
+- 只生成一个 Markdown 表格
+- 表格表头：省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 开放申请及截止日期 | 政策原文链接
+- 政策名称列：使用 `[政策名称](政策原文URL)` 格式
+
+### 数据处理规则
+- 省级政策覆盖多个城市：城市列用顿号分隔
+- 市级政策：城市列填写具体城市名称
+- 同一城市多个政策：每个政策单独一行
+- 无新政策的城市：不输出该城市
+
+请开始生成报告。"""
+
+    user_prompt = f"请生成2026年人社补贴政策追踪报告（西南四省），政策发布日期为2026年1月1日之后，截止当前日期（{today}）仍未过期的政策。严格按照固定格式输出。"
+
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.3,
+        "stream": False
+    }
+
+    print("  📡 正在联网搜索西南四省人社补贴政策...")
+    resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    print(f"  ✅ 生成完成，共 {len(content)} 字符")
+    return content
 
 
 def parse_markdown_table_to_list(markdown_text):
-    """解析 Markdown 表格，返回 headers 和 rows"""
+    """解析 Markdown 表格，返回 headers, rows"""
+    if not markdown_text:
+        return None, None
     lines = markdown_text.strip().split('\n')
     if len(lines) < 2:
         return None, None
@@ -166,7 +253,6 @@ def parse_markdown_table_to_list(markdown_text):
 
 
 def extract_link(text):
-    """提取 Markdown 链接 [显示文本](URL) 中的显示文本和 URL"""
     match = re.search(r'\[([^\]]+)\]\(([^\)]+)\)', text)
     if match:
         return match.group(1), match.group(2)
@@ -174,26 +260,16 @@ def extract_link(text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
-    """发送飞书富文本消息（修正版）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 只取前10条，避免超长或触发审核
-    rows_to_send = rows[:10]
+    rows_to_send = rows[:10]  # 只发前10条
 
     content_blocks = []
-
-    # 标题
     title_text = filter_sensitive(f"📋 2026年人社补贴政策追踪（{region}）")
-    content_blocks.append([
-        {"tag": "text", "text": title_text}
-    ])
-
-    # 空行
-    content_blocks.append([
-        {"tag": "text", "text": " "}
-    ])
+    content_blocks.append([{"tag": "text", "text": title_text}])
+    content_blocks.append([{"tag": "text", "text": " "}])
 
     for idx, row in enumerate(rows_to_send):
         if len(row) < 5:
@@ -203,12 +279,10 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         policy_name_raw = row[2] if len(row) > 2 else ""
         deadline = row[5] if len(row) > 5 else "详见原文"
 
-        # 过滤屏蔽词（纯文本部分）
         province = filter_sensitive(province)
         city = filter_sensitive(city)
         deadline = filter_sensitive(deadline)
 
-        # 提取政策名称（纯文本）
         display_name, _ = extract_link(policy_name_raw)
         if not display_name:
             display_name = policy_name_raw
@@ -216,39 +290,26 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         if len(display_name) > 60:
             display_name = display_name[:57] + "..."
 
-        # 获取该城市的官网首页（不再使用政策原文链接）
         website = get_website(city)
 
-        # 构建一个段落（包含多个元素）
         line_parts = []
         line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
-
-        # 政策名称（纯文本，不加链接）
         line_parts.append({"tag": "text", "text": display_name})
-
-        # 官网首页链接（使用 a 标签）
         line_parts.append({"tag": "a", "text": "官网首页", "href": website})
-
-        # 截止日期
         line_parts.append({"tag": "text", "text": f" ⏰ {deadline}"})
 
         content_blocks.append(line_parts)
 
-        # 分隔线（除了最后一条）
         if idx < len(rows_to_send) - 1:
             content_blocks.append([
                 {"tag": "text", "text": "─────────────────────"}
             ])
 
-    # 底部统计
     total = len(rows)
     footer = f"📊 共 {total} 条政策" + (f"（仅展示前 {len(rows_to_send)} 条）" if total > len(rows_to_send) else "")
     footer = filter_sensitive(footer)
-    content_blocks.append([
-        {"tag": "text", "text": footer}
-    ])
+    content_blocks.append([{"tag": "text", "text": footer}])
 
-    # 构造正确的富文本结构（去掉外层 "post"）
     post_content = {
         "zh_cn": {
             "title": filter_sensitive("2026年人社补贴政策追踪报告"),
@@ -268,7 +329,6 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         "content": json.dumps(post_content, ensure_ascii=False)
     }
 
-    # 调试：打印消息体积
     msg_size = len(json.dumps(payload, ensure_ascii=False))
     print(f"  📊 消息体积：{msg_size} 字节")
 
