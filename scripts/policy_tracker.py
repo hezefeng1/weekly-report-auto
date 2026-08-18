@@ -142,7 +142,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
-    # 只发前3条
+    # 只发前3条，保持极简
     rows_to_send = rows[:3]
 
     content_blocks = []
@@ -150,11 +150,6 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
     # 标题
     content_blocks.append([
         {"tag": "text", "text": f"📋 2026年人社补贴政策追踪（{region}）"}
-    ])
-
-    # 空行
-    content_blocks.append([
-        {"tag": "text", "text": " "}
     ])
 
     # 逐条政策
@@ -172,11 +167,10 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
         if len(display_name) > 50:
             display_name = display_name[:47] + "..."
 
-        # 每个段落包含多个元素
+        # 每条政策作为一个段落
         line_parts = []
         line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
 
-        # 🔥 使用标准 a 标签代替 text 带 href
         if link_url:
             line_parts.append({"tag": "a", "text": display_name, "href": link_url})
         else:
@@ -186,11 +180,11 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
 
         content_blocks.append(line_parts)
 
+        # 分隔线（使用 hr 标签，与成功示例一致）
         if idx < len(rows_to_send) - 1:
-            content_blocks.append([
-                {"tag": "text", "text": "─────────────────────"}
-            ])
+            content_blocks.append([{"tag": "hr"}])
 
+    # 底部统计
     total = len(rows)
     if total > 3:
         content_blocks.append([
@@ -201,12 +195,12 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
             {"tag": "text", "text": f"📊 共 {total} 条政策"}
         ])
 
+    # 🔥 关键修改：去掉 "post" 外层，直接使用 {"zh_cn": {...}}
+    # 与您成功请求体结构完全一致
     post_content = {
-        "post": {
-            "zh_cn": {
-                "title": "2026年人社补贴政策追踪报告",
-                "content": content_blocks
-            }
+        "zh_cn": {
+            "title": "2026年人社补贴政策追踪报告",
+            "content": content_blocks
         }
     }
 
@@ -221,8 +215,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="西南四省"
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
-        "content": content_str,
-        "uuid": "a0d69e20-1dd1-458b-k525-dfeca4015204"  # 可选，但加上更完整
+        "content": content_str
     }
 
     # 打印完整入参和 content
