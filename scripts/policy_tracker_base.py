@@ -1,8 +1,10 @@
 import os
 import json
 import re
+import time
 from datetime import datetime
 from openai import OpenAI
+import requests
 from common.feishu import get_tenant_access_token
 
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID")
@@ -10,13 +12,14 @@ FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-# ==================== 初始化 OpenAI 客户端 ====================
+# 初始化 OpenAI 客户端（用于 Responses API）
 client = OpenAI(
     api_key=DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com"
 )
 
 # ==================== 配置 ====================
+# 🔥 如果想快速测试，只保留 2-3 个地区即可
 SOCIAL_SECURITY_PROVINCES = [
     "北京市", "上海市", "广东省", "浙江省", "江苏省",
     "四川省", "湖北省", "湖南省", "山东省", "河南省",
@@ -102,12 +105,13 @@ def build_housing_prompt(province, city):
 现在开始搜索。查询截止日期：{today}"""
 
 
-# ==================== 查询函数（Responses API） ====================
-def query_with_search(prompt, region_name, retries=2):
-    """使用 Responses API 进行联网搜索查询"""
+# ==================== 查询函数（带超时和重试） ====================
+def query_with_search(prompt, region_name, retries=2, timeout=120):
+    """使用 Responses API 进行联网搜索查询，带超时和重试"""
     for attempt in range(retries):
         try:
             print(f"  📡 查询: {region_name} (尝试 {attempt+1}/{retries})")
+            start_time = time.time()
             
             response = client.responses.create(
                 model="deepseek-v4-flash",
@@ -115,15 +119,19 @@ def query_with_search(prompt, region_name, retries=2):
                 input=prompt,
                 tools=[{"type": "web_search"}],
                 temperature=0.0,
+                timeout=timeout,  # 超时时间（秒）
             )
             
-            # 提取返回内容
+            elapsed = time.time() - start_time
             content = response.output_text
+            print(f"  ✅ 收到响应 (耗时 {elapsed:.1f}s, 长度 {len(content)} 字符)")
             return content
             
         except Exception as e:
+            print(f"    ⚠️ 请求失败: {e}")
             if attempt < retries - 1:
-                print(f"    ⚠️ 重试中...")
+                print(f"    ⏳ 等待 5 秒后重试...")
+                time.sleep(5)
                 continue
             else:
                 raise e
@@ -132,12 +140,11 @@ def query_with_search(prompt, region_name, retries=2):
 
 # ==================== 解析函数 ====================
 def parse_markdown_table_to_list(markdown_text):
-    """解析 Markdown 表格，支持不同列数"""
+    """解析 Markdown 表格，返回 rows（列表）"""
     if not markdown_text:
         return None
     
-    # 提取代码块内的表格，或直接使用 Markdown 表格
-    # 先尝试提取 ```markdown 或 ``` 代码块
+    # 提取代码块内的表格
     code_block_match = re.search(r'```(?:markdown)?\s*\n(.*?)\n```', markdown_text, re.DOTALL)
     if code_block_match:
         markdown_text = code_block_match.group(1)
@@ -158,7 +165,7 @@ def parse_markdown_table_to_list(markdown_text):
     return rows
 
 
-# ==================== 发送函数 ====================
+# ==================== 发送飞书消息 ====================
 def send_rich_text_message(access_token, receive_id, rows, title, headers):
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
@@ -253,7 +260,6 @@ def main():
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
     if social_rows:
-        # 检测表格列数动态调整表头
         first_row_len = len(social_rows[0])
         if first_row_len >= 7:
             headers = ["省份", "地区", "基数下限", "基数上限", "执行周期", "发布日期", "数据来源"]
