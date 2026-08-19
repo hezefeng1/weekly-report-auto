@@ -11,7 +11,6 @@ RECEIVE_OPEN_ID_POLICY = os.environ.get("RECEIVE_OPEN_ID_POLICY")
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
 # ==================== 配置 ====================
-# 社保查询：按省份（省级统一发布）
 SOCIAL_SECURITY_PROVINCES = [
     "北京市", "上海市", "广东省", "浙江省", "江苏省",
     "四川省", "湖北省", "湖南省", "山东省", "河南省",
@@ -19,9 +18,7 @@ SOCIAL_SECURITY_PROVINCES = [
     "云南省", "贵州省", "广西壮族自治区",
 ]
 
-# 公积金查询：按城市（市级发布，可能有区县差异）
 HOUSING_FUND_CITIES = [
-    # (省份, 城市)
     ("北京市", "北京市"),
     ("上海市", "上海市"),
     ("广东省", "广州市"),
@@ -44,66 +41,85 @@ HOUSING_FUND_CITIES = [
     ("广西壮族自治区", "南宁市"),
 ]
 
-# ==================== 工具函数 ====================
-def query_social_security(province):
-    """查询指定省份的社保缴费基数上下限（省级统一）"""
-    system_prompt = """你是社保政策分析AI。
+# ==================== 提示词（参考政策追踪格式） ====================
+def build_social_prompt(province):
+    today = datetime.now().strftime("%Y年%m月%d日")
+    system_prompt = f"""你是社保政策情报分析AI。
 
-任务：查询该省份2026年度（或2026年7月至2027年6月社保年度）职工基本养老保险的缴费基数上下限。
+任务：查询{province}2026年度（或2026年7月至2027年6月社保年度）职工基本养老保险缴费基数上下限。
 
-输出格式要求（严格按此格式，不加额外文字）：
+## 强制限制
+
+### 绝对禁止
+- 禁止生成任何中间文件
+- 禁止在最终文档中添加总结、建议等额外文字
+- 禁止输出官网首页链接（必须输出政策原文链接）
+- 禁止链接带追踪参数
+
+### 数据要求
+- 社保基数：优先查找职工基本养老保险的缴费基数上下限
+- 如果数据未公布，填写"待公布"
+- 必须注明执行周期（如：2026-07至2027-06）
+
+## 输出格式
+只生成一个 Markdown 表格，表头如下：
 | 省份 | 社保基数下限 | 社保基数上限 | 执行周期 |
 |------|-------------|-------------|----------|
-| XX省 | XXXX元/月 | XXXX元/月 | YYYY-MM至YYYY-MM |
 
-如果数据未公布，填写"待公布"。
-"""
+## 输出前自检清单
+- [ ] 数据来源为省级人社部门官方发布
+- [ ] 上下限数字格式正确（如：XXXX元/月）
+- [ ] 执行周期格式正确（YYYY-MM至YYYY-MM）
+- [ ] 无多余文字，仅表格
 
-    user_prompt = f"请查询{province}2026年度职工基本养老保险缴费基数上下限（截至{datetime.now().strftime('%Y年%m月%d日')}已公布的最新数据）。"
+请开始查询。"""
 
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.1,
-        "stream": False
-    }
-
-    print(f"  📡 社保: {province}")
-    resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
-    resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
-    return content
+    user_prompt = f"请查询{province}2026年度职工基本养老保险缴费基数上下限（截至{today}已公布的最新数据）。严格按照表格格式输出。"
+    return system_prompt, user_prompt
 
 
-def query_housing_fund(province, city):
-    """查询指定城市的公积金缴存基数上下限（市级，可能含区县差异）"""
-    system_prompt = """你是公积金政策分析AI。
+def build_housing_prompt(province, city):
+    today = datetime.now().strftime("%Y年%m月%d日")
+    system_prompt = f"""你是公积金政策情报分析AI。
 
-任务：查询该城市2026年度（或2026年7月至2027年6月年度）住房公积金缴存基数上下限。
+任务：查询{city}2026年度（或2026年7月至2027年6月年度）住房公积金缴存基数上下限。
 
-注意：公积金基数下限通常与当地最低工资标准挂钩，同一城市不同区县可能不同。如果存在区县差异，请逐区县列出。
+## 强制限制
 
-输出格式要求（严格按此格式，不加额外文字）：
+### 绝对禁止
+- 禁止生成任何中间文件
+- 禁止在最终文档中添加总结、建议等额外文字
+- 禁止输出官网首页链接
+- 禁止链接带追踪参数
+
+### 数据要求
+- 公积金下限：通常与当地最低工资标准挂钩，同一城市不同区县可能不同。
+- 如果存在区县差异，请逐区县列出；若全市统一，则写"全市统一"。
+- 如果数据未公布，填写"待公布"
+- 必须注明执行周期
+
+## 输出格式
+只生成一个 Markdown 表格，表头如下：
 | 省份 | 城市 | 区县 | 公积金下限 | 公积金上限 | 执行周期 |
 |------|------|------|-----------|-----------|----------|
-| XX省 | XX市 | 全市统一 | XXXX元/月 | XXXX元/月 | YYYY-MM至YYYY-MM |
 
-若各区县不同，请分行列出各区县的下限（上限通常全市统一）：
-| XX省 | XX市 | 区县1 | XXXX元/月 | XXXX元/月 | YYYY-MM至YYYY-MM |
-| XX省 | XX市 | 区县2 | XXXX元/月 | XXXX元/月 | YYYY-MM至YYYY-MM |
+注意：若各区县不同，请分行列出；若全市统一，区县列写"全市统一"。
 
-如果数据未公布，填写"待公布"。
-"""
+## 输出前自检清单
+- [ ] 数据来源为市级公积金管理中心官方发布
+- [ ] 下限、上限数字格式正确（如：XXXX元/月）
+- [ ] 执行周期格式正确（YYYY-MM至YYYY-MM）
+- [ ] 若存在区县差异，已分行列出
+- [ ] 无多余文字，仅表格
 
-    user_prompt = f"请查询{city}2026年度住房公积金缴存基数上下限，注意区县差异（截至{datetime.now().strftime('%Y年%m月%d日')}已公布的最新数据）。"
+请开始查询。"""
 
+    user_prompt = f"请查询{city}2026年度住房公积金缴存基数上下限，注意区县差异（截至{today}已公布的最新数据）。严格按照表格格式输出。"
+    return system_prompt, user_prompt
+
+
+# ==================== 查询函数 ====================
+def query_data(system_prompt, user_prompt, region_name):
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json"
@@ -118,7 +134,7 @@ def query_housing_fund(province, city):
         "stream": False
     }
 
-    print(f"  📡 公积金: {city}")
+    print(f"  📡 查询: {region_name}")
     resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
@@ -126,7 +142,6 @@ def query_housing_fund(province, city):
 
 
 def parse_markdown_table_to_list(markdown_text):
-    """解析 Markdown 表格，返回 rows（列表）"""
     if not markdown_text:
         return None
     lines = markdown_text.strip().split('\n')
@@ -144,15 +159,12 @@ def parse_markdown_table_to_list(markdown_text):
 
 
 def send_rich_text_message(access_token, receive_id, rows, title, headers):
-    """发送飞书富文本消息（使用 md 标签），rows 为列表，headers 为表头列表"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
         return
 
     md_lines = []
     md_lines.append(f"📋 {title}\n")
-
-    # 表头
     header_line = "| " + " | ".join(headers) + " |"
     separator_line = "|" + "|".join(["------"] * len(headers)) + "|"
     md_lines.append(header_line)
@@ -194,17 +206,19 @@ def send_rich_text_message(access_token, receive_id, rows, title, headers):
     print(f"  ✅ 发送成功")
 
 
+# ==================== 主程序 ====================
 def main():
     print("=" * 50)
     print("📋 2026年社保公积金基数追踪")
     print("=" * 50)
 
-    # ---------- 1. 查询社保（省级） ----------
+    # ---------- 1. 社保 ----------
     print("\n🔹 查询社保基数（省级统一）...")
     social_rows = []
     for province in SOCIAL_SECURITY_PROVINCES:
         try:
-            md = query_social_security(province)
+            sys_prompt, user_prompt = build_social_prompt(province)
+            md = query_data(sys_prompt, user_prompt, province)
             rows = parse_markdown_table_to_list(md)
             if rows:
                 social_rows.extend(rows)
@@ -214,12 +228,13 @@ def main():
         except Exception as e:
             print(f"    ❌ {province} 失败: {e}")
 
-    # ---------- 2. 查询公积金（城市级，含区县差异） ----------
-    print("\n🔹 查询公积金基数（市级，可能含区县差异）...")
+    # ---------- 2. 公积金 ----------
+    print("\n🔹 查询公积金基数（市级，含区县差异）...")
     fund_rows = []
     for province, city in HOUSING_FUND_CITIES:
         try:
-            md = query_housing_fund(province, city)
+            sys_prompt, user_prompt = build_housing_prompt(province, city)
+            md = query_data(sys_prompt, user_prompt, city)
             rows = parse_markdown_table_to_list(md)
             if rows:
                 fund_rows.extend(rows)
@@ -229,7 +244,7 @@ def main():
         except Exception as e:
             print(f"    ❌ {city} 失败: {e}")
 
-    # ---------- 3. 发送消息 ----------
+    # ---------- 3. 发送 ----------
     if not social_rows and not fund_rows:
         print("\n❌ 未获取到任何数据")
         return
