@@ -420,7 +420,7 @@ def send_rich_text_message(access_token, receive_id, rows, region="北京天津�
 
 def main():
     print("=" * 50)
-    print("📋 人社补贴政策追踪（西南四省）")
+    print("📋 人社补贴政策追踪（北京天津东北三省内蒙古）")
     print("=" * 50)
 
     print("\n1. 生成政策追踪报告...")
