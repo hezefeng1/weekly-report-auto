@@ -186,7 +186,7 @@ def generate_policy_report():
 
     system_prompt = """你是人社政策情报分析AI。
 
-任务：搜索2026年1月1日之后新发布的企业补贴政策，覆盖四川省、重庆市、云南省、贵州省，输出表格格式政策追踪报告。
+任务：搜索2026年1月1日之后新发布的企业补贴政策，覆盖北京市、天津市、黑龙江省、吉林省、辽宁省、内蒙古自治区，输出表格格式政策追踪报告。
 
 ## 强制限制
 
@@ -282,7 +282,7 @@ def generate_policy_report():
 
 请开始生成报告。"""
 
-    user_prompt = f"请生成2026年人社补贴政策追踪报告（西南四省），政策发布日期为2026年1月1日之后，截止当前日期（{today}）仍未过期的政策。严格按照固定格式输出。"
+    user_prompt = f"请生成2026年人社补贴政策追踪报告（北京天津东北三省内蒙古），政策发布日期为2026年1月1日之后，截止当前日期（{today}）仍未过期的政策。严格按照固定格式输出。"
 
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -298,7 +298,7 @@ def generate_policy_report():
         "stream": False
     }
 
-    print("  📡 正在联网搜索西南四省人社补贴政策...")
+    print("  📡 正在联网搜索北京天津东北三省内蒙古人社补贴政策...")
     resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=300)
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
@@ -330,7 +330,7 @@ def extract_link(text):
     return text, None
 
 
-def send_rich_text_message(access_token, receive_id, rows, region="西南四省"):
+def send_rich_text_message(access_token, receive_id, rows, region="北京天津东北三省内蒙古"):
     """发送飞书富文本消息（使用 md 标签，表格包含6列）"""
     if not receive_id or receive_id == "":
         print("  ❌ RECEIVE_OPEN_ID_POLICY 未配置")
@@ -441,7 +441,7 @@ def main():
     token = get_tenant_access_token(FEISHU_APP_ID, FEISHU_APP_SECRET)
 
     print("\n4. 发送富文本消息...")
-    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows, "西南四省")
+    send_rich_text_message(token, RECEIVE_OPEN_ID_POLICY, rows, "北京天津东北三省内蒙古")
 
     print("\n✅ 政策追踪报告发送完成！")
 
