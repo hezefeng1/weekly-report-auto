@@ -1,0 +1,30 @@
+name: Policy Tracker陕西甘肃西藏宁夏
+
+on:
+  schedule:
+    - cron: '0 11 * * 1'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run policy tracker
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_POLICY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/policy_tracker_sxgsxznx.py
