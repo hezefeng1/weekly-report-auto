@@ -1,13 +1,14 @@
-name: Policy Tracker 社保公积金基数上下限追踪
+name: Policy Tracker 社保公积金基数
 
 on:
   schedule:
-    - cron: '0 10 * * 2'   # 每周二上午10:00运行（可调整）
-  workflow_dispatch:        # 支持手动触发
+    - cron: '0 10 * * 2'   # 每周二上午10:00
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # 👈 增加超时，防止被强制终止
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install openai   # 👈 新增
+          pip install openai   # 👈 显式安装 openai
 
       - name: Run base tracker
         env:
