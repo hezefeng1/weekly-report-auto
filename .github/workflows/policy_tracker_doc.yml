@@ -1,4 +1,4 @@
-name: Policy Tracker chunwenben
+name: Policy Tracker北京天津东北三省内蒙古
 
 on:
   schedule:
@@ -27,4 +27,4 @@ jobs:
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_POLICY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: python scripts/policy_tracker_doc.py
+        run: python scripts/policy_tracker_docr.py
