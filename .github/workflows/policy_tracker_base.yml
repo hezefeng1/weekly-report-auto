@@ -20,6 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          pip install openai   # 👈 新增
 
       - name: Run base tracker
         env:
