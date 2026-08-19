@@ -1,31 +1,56 @@
-- name: 西南四省（云贵川渝）
-  env:
-    FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-    FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-    RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_SW }}
-    DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-  run: python scripts/policy_tracker.py
+name: Policy Tracker 全区域
 
-- name: 北京天津东北内蒙古
-  env:
-    FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-    FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-    RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_BJ_TJ_DB }}
-    DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-  run: python scripts/policy_tracker_doc.py
+on:
+  schedule:
+    - cron: '0 11 * * 1'   # 每周一上午11点运行（保留原有时间）
+  workflow_dispatch:        # 支持手动触发
 
-- name: 陕西甘肃西藏宁夏
-  env:
-    FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-    FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-    RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_SXGSXZNX }}
-    DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-  run: python scripts/policy_tracker_sxgsxznx.py
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-- name: 山东省
-  env:
-    FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-    FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-    RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_SHANDONG }}
-    DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-  run: python scripts/policy_tracker_shandong.py
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      # ============ 各区域任务（每个独立指定接收者） ============
+
+      - name: 西南四省（云贵川渝）
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_ID_SW }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/policy_tracker.py
+
+      - name: 北京天津东北内蒙古
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_ID_BJ_TJ_DB }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/policy_tracker_doc.py
+
+      - name: 陕西甘肃西藏宁夏
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_ID_SXGSXZNX }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/policy_tracker_sxgsxznx.py
+
+      - name: 山东省
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_ID_SHANDONG }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python scripts/policy_tracker_shandong.py
