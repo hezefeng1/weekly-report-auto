@@ -215,7 +215,7 @@ replacements = {
     "银行卡": "银行卡",
     }
     # 按长度降序替换，避免短词干扰长词
-    for old, new in sorted(replacements.items(), key=lambda x: -len(x[0])):
+for old, new in sorted(replacements.items(), key=lambda x: -len(x[0])):
         text = text.replace(old, new)
 
     # ---------- 第三步：附加清理 ----------
