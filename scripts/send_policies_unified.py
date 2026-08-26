@@ -17,7 +17,7 @@ def load_policies():
         data = json.load(f)
     return data.get("政策", [])
 
-# ==================== 屏蔽词规则（从 policy_tracker.py 完整复制） ====================
+# ==================== 屏蔽词规则（完整版） ====================
 SENSITIVE_RULES_RAW = """
 发放,http
 贴 补
@@ -149,18 +149,22 @@ def send_rich_text_message(access_token, receive_id, policies, region_name):
         print(f"  ❌ {region_name} 未配置接收者")
         return
 
-    # 🔥 改用 md 标签 + 表格格式
     md_lines = []
     md_lines.append(f"📋 2026年人社补贴政策追踪（{region_name}）\n")
 
-    # 表头（与 policy_tracker.py 一致，6列）
     md_lines.append("| 省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 截止日期 |")
     md_lines.append("|------|------|----------|--------------|----------------|----------|")
 
     for policy in policies:
         province = filter_sensitive(policy.get("省份", ""))
         city = filter_sensitive(policy.get("城市", ""))
-        policy_name = filter_sensitive(policy.get("政策名称", ""))
+        title = filter_sensitive(policy.get("政策标题", ""))
+        link = policy.get("政策链接", "")
+        # 🔥 拼接 Markdown 链接
+        if title and link:
+            policy_name = f"[{title}]({link})"
+        else:
+            policy_name = title
         condition = filter_sensitive(policy.get("核心申请条件", ""))
         subsidy = filter_sensitive(policy.get("补贴标准", ""))
         deadline = filter_sensitive(policy.get("截止日期", "详见原文"))
@@ -172,7 +176,6 @@ def send_rich_text_message(access_token, receive_id, policies, region_name):
 
     md_content = "\n".join(md_lines)
 
-    # 🔥 使用 md 标签
     send_url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
