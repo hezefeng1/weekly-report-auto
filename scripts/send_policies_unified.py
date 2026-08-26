@@ -16,10 +16,100 @@ def load_policies():
     with open("config/policies.json", "r", encoding="utf-8") as f:
         data = json.load(f)
     return data.get("政策", [])
+
+# ==================== 屏蔽词规则（从 policy_tracker.py 完整复制） ====================
+SENSITIVE_RULES_RAW = """
+发放,http
+贴 补
+卜帖
+人力社,高温补贴
+国家,高温补贴
+最新卜帖
+^(通 知\.)
+(zip|exe|rar|
+pdf|doc|docx)$
+人力社
+^(\d|\_|\.|\-)
+*(zip|exe|rar)$
+一业一查
+部门联合双随机抽查工作计划
+人力社,津贴
+人力社,补助
+人力社,补贴
+人力社,居民补贴
+人力社,综合补贴
+人力社,个人补贴
+人力社,补贴
+居 民补 贴
+综 合补 贴
+京东商城,国家补贴
+京东商城,平台补贴
+工资补贴,扫描二维码
+社保局工资补贴
+人力社,工资补贴
+薪资补贴,微信扫码
+人力社,薪资补贴
+人力社,社保补贴
+人社部个人劳动补贴
+国家财政部补贴
+社保补贴,微信扫码
+人社局,补贴
+国家,补贴通知
+补贴,申领
+裁员名单
+
+补贴,申领
+就业困难,人员
+失业,保险
+脱贫,人口
+残疾人,安置
+一次性,扩岗,补助
+岗前,培训,补贴
+就业,见习,补贴
+稳岗,返还,补贴
+培训,补贴
+吸纳,就业
+招用,高校,毕业生
+留用,率
+扩岗,补助
+工伤,保险
+养老,保险
+失业,金
+低保,家庭
+僵尸,企业
+见习,基地
+岗位,补贴
+引才,奖励
+返乡,就业
+跨省,就业
+""".strip().splitlines()
+
+def load_sensitive_rules(lines):
+    rules = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        keywords = [kw.strip() for kw in line.split(',') if kw.strip()]
+        if keywords:
+            rules.append(keywords)
+    return rules
+
+SENSITIVE_RULES = load_sensitive_rules(SENSITIVE_RULES_RAW)
+
 def filter_sensitive(text):
     if not text:
         return text
-    # 简化版过滤，仅保留必要的替换逻辑
+
+    text_lower = text.lower()
+    for keywords in SENSITIVE_RULES:
+        if all(kw.lower() in text_lower for kw in keywords):
+            for kw in keywords:
+                text = text.replace(kw, "***")
+                kw_no_space = kw.replace(" ", "")
+                if kw_no_space != kw:
+                    text = text.replace(kw_no_space, "***")
+
     replacements = {
         "补贴": "补助", "稳岗": "稳工", "返还": "退回", "社保": "保险",
         "失业": "待业", "就业": "用工", "培训": "培养", "吸纳": "接收",
@@ -46,7 +136,7 @@ def filter_sensitive(text):
     }
     for old, new in sorted(replacements.items(), key=lambda x: -len(x[0])):
         text = text.replace(old, new)
-    
+
     text = re.sub(r'\d{5,}', '****', text)
     extra = ['社保卡', '身份证', '工资卡', '扫码', '微信', '支付宝', '银行', '账号', '密码', '验证码', '银行卡']
     for kw in extra:
@@ -59,37 +149,31 @@ def send_rich_text_message(access_token, receive_id, policies, region_name):
         print(f"  ❌ {region_name} 未配置接收者")
         return
 
-    content_blocks = []
-    title_text = filter_sensitive(f"📋 2026年人社补贴政策追踪（{region_name}）")
-    content_blocks.append([{"tag": "text", "text": title_text}])
-    content_blocks.append([{"tag": "text", "text": " "}])
+    # 🔥 改用 md 标签 + 表格格式
+    md_lines = []
+    md_lines.append(f"📋 2026年人社补贴政策追踪（{region_name}）\n")
 
-    for idx, policy in enumerate(policies):
+    # 表头（与 policy_tracker.py 一致，6列）
+    md_lines.append("| 省份 | 城市 | 政策名称 | 核心申请条件 | 补贴标准/金额 | 截止日期 |")
+    md_lines.append("|------|------|----------|--------------|----------------|----------|")
+
+    for policy in policies:
         province = filter_sensitive(policy.get("省份", ""))
         city = filter_sensitive(policy.get("城市", ""))
         policy_name = filter_sensitive(policy.get("政策名称", ""))
+        condition = filter_sensitive(policy.get("核心申请条件", ""))
+        subsidy = filter_sensitive(policy.get("补贴标准", ""))
         deadline = filter_sensitive(policy.get("截止日期", "详见原文"))
 
-        line_parts = []
-        line_parts.append({"tag": "text", "text": f"📍 {province}｜{city} "})
-        line_parts.append({"tag": "text", "text": policy_name})
-        line_parts.append({"tag": "text", "text": f" ⏰ {deadline}"})
+        md_lines.append(f"| {province} | {city} | {policy_name} | {condition} | {subsidy} | {deadline} |")
 
-        content_blocks.append(line_parts)
-        if idx < len(policies) - 1:
-            content_blocks.append([{"tag": "text", "text": "─────────────────────"}])
+    footer = filter_sensitive(f"\n📊 共 {len(policies)} 条政策")
+    md_lines.append(footer)
 
-    footer = filter_sensitive(f"📊 共 {len(policies)} 条政策")
-    content_blocks.append([{"tag": "text", "text": footer}])
+    md_content = "\n".join(md_lines)
 
-    post_content = {
-        "zh_cn": {
-            "title": filter_sensitive("2026年人社补贴政策追踪报告"),
-            "content": content_blocks
-        }
-    }
-
-    url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
+    # 🔥 使用 md 标签
+    send_url = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -98,10 +182,17 @@ def send_rich_text_message(access_token, receive_id, policies, region_name):
     payload = {
         "receive_id": receive_id,
         "msg_type": "post",
-        "content": json.dumps(post_content, ensure_ascii=False)
+        "content": json.dumps({
+            "zh_cn": {
+                "title": "2026年人社补贴政策追踪报告",
+                "content": [
+                    [{"tag": "md", "text": md_content}]
+                ]
+            }
+        })
     }
 
-    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    resp = requests.post(send_url, headers=headers, json=payload, timeout=30)
     if resp.status_code != 200:
         print(f"  ❌ {region_name} 发送失败: {resp.text}")
         resp.raise_for_status()
