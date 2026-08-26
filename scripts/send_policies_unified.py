@@ -17,7 +17,7 @@ def load_policies():
         data = json.load(f)
     return data.get("政策", [])
 
-# ==================== 屏蔽词规则（完整版） ====================
+# ==================== 屏蔽词规则（完整版，包含最新补充） ====================
 SENSITIVE_RULES_RAW = """
 发放,http
 贴 补
@@ -58,6 +58,7 @@ pdf|doc|docx)$
 补贴,申领
 裁员名单
 
+# ===== 通用组合规则 =====
 补贴,申领
 就业困难,人员
 失业,保险
@@ -82,6 +83,29 @@ pdf|doc|docx)$
 引才,奖励
 返乡,就业
 跨省,就业
+
+# ===== 新增：针对新政策补充 =====
+人力资源,社会保障
+人力资本,投资
+省政府,办公厅
+稳就业,重点
+调控,行业
+平台,企业
+快递,外卖
+从业,人员
+参保,登记
+基本养老,保险
+基本医疗,保险
+失业,工伤
+留用,补贴
+劳务,品牌
+运营,主体
+新增,就业
+援企,稳岗
+职业资格,证书
+技能等级,证书
+在职,职工
+领取,失业,保险金
 """.strip().splitlines()
 
 def load_sensitive_rules(lines):
@@ -101,6 +125,7 @@ def filter_sensitive(text):
     if not text:
         return text
 
+    # 第一步：规则触发替换
     text_lower = text.lower()
     for keywords in SENSITIVE_RULES:
         if all(kw.lower() in text_lower for kw in keywords):
@@ -110,6 +135,7 @@ def filter_sensitive(text):
                 if kw_no_space != kw:
                     text = text.replace(kw_no_space, "***")
 
+    # 第二步：近义词替换
     replacements = {
         "补贴": "补助", "稳岗": "稳工", "返还": "退回", "社保": "保险",
         "失业": "待业", "就业": "用工", "培训": "培养", "吸纳": "接收",
@@ -133,10 +159,33 @@ def filter_sensitive(text):
         "留用": "留任", "留用率": "留任率", "扫码": "扫码", "微信": "微信",
         "支付宝": "支付宝", "银行": "银行", "账号": "账号", "密码": "密码",
         "验证码": "验证码", "银行卡": "银行卡",
+        # 补充
+        "人力资本": "人才资本",
+        "省政府": "省级政府",
+        "办公厅": "办公室",
+        "稳就业": "稳用工",
+        "重点调控": "重点调节",
+        "平台企业": "平台单位",
+        "快递": "物流",
+        "外卖": "配送",
+        "从业人员": "工作人员",
+        "参保登记": "投保登记",
+        "基本养老保险": "基础养老险",
+        "基本医疗保险": "基础医疗险",
+        "失业保险金": "待业保险金",
+        "留用补贴": "留任支持",
+        "劳务品牌": "劳务标识",
+        "运营主体": "运营单位",
+        "新增就业": "新增用工",
+        "援企稳岗": "助企稳工",
+        "职业资格证书": "职业资格证",
+        "技能等级证书": "技能等级证",
+        "在职职工": "在岗人员",
     }
     for old, new in sorted(replacements.items(), key=lambda x: -len(x[0])):
         text = text.replace(old, new)
 
+    # 第三步：数字和邮箱清理
     text = re.sub(r'\d{5,}', '****', text)
     extra = ['社保卡', '身份证', '工资卡', '扫码', '微信', '支付宝', '银行', '账号', '密码', '验证码', '银行卡']
     for kw in extra:
@@ -160,7 +209,6 @@ def send_rich_text_message(access_token, receive_id, policies, region_name):
         city = filter_sensitive(policy.get("城市", ""))
         title = filter_sensitive(policy.get("政策标题", ""))
         link = policy.get("政策链接", "")
-        # 🔥 拼接 Markdown 链接
         if title and link:
             policy_name = f"[{title}]({link})"
         else:
