@@ -1,0 +1,30 @@
+name: 推送政策追踪（JSON 中转版）
+
+on:
+  push:
+    paths:
+      - 'config/policies.json'
+      - 'config/cities.json'
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install requests
+      - name: 去重合并
+        run: python scripts/merge_policies.py
+      - name: 发送政策
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_POLICY }}
+          RECEIVE_OPEN_ID_SHANDONG: ${{ secrets.RECEIVE_OPEN_ID_SHANDONG }}
+          RECEIVE_OPEN_ID_HB_HN: ${{ secrets.RECEIVE_OPEN_ID_HB_HN }}
+          RECEIVE_OPEN_ID_HEBEI_HENAN_SHANXI: ${{ secrets.RECEIVE_OPEN_ID_HEBEI_HENAN_SHANXI }}
+        run: python scripts/send_policies_unified.py
