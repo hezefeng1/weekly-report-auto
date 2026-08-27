@@ -23,12 +23,5 @@ jobs:
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          RECEIVE_OPEN_ID_SW: ${{ secrets.RECEIVE_OPEN_ID_SW }}
-          RECEIVE_OPEN_ID_SHANDONG: ${{ secrets.RECEIVE_OPEN_ID_SHANDONG }}
-          RECEIVE_OPEN_ID_HB_HN: ${{ secrets.RECEIVE_OPEN_ID_HB_HN }}
-          RECEIVE_OPEN_ID_HEBEI_HENAN_SHANXI: ${{ secrets.RECEIVE_OPEN_ID_HEBEI_HENAN_SHANXI }}
-          RECEIVE_OPEN_ID_BJ_TJ_DB: ${{ secrets.RECEIVE_OPEN_ID_BJ_TJ_DB }}
-          RECEIVE_OPEN_ID_SXGSXZNX: ${{ secrets.RECEIVE_OPEN_ID_SXGSXZNX }}
-          RECEIVE_OPEN_ID_JAJSZJ: ${{ secrets.RECEIVE_OPEN_ID_JAJSZJ }}
-          RECEIVE_OPEN_ID_GD_GX_FJ_HN: ${{ secrets.RECEIVE_OPEN_ID_GD_GX_FJ_HN }}
+          RECEIVE_OPEN_ID_POLICY: ${{ secrets.RECEIVE_OPEN_ID_POLICY }}
         run: python scripts/send_policies_unified.py
