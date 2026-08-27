@@ -2,7 +2,7 @@ name: Policy Tracker广东广西海南
 
 on:
   schedule:
-    - cron: '0 11 * * 1'
+    - cron: 
   workflow_dispatch:
 
 jobs:
