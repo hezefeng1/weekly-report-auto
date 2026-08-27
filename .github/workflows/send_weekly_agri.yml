@@ -16,8 +16,8 @@ jobs:
           python-version: '3.10'
       - name: Install dependencies
         run: |
-          pip install requests
-          pip install pillow
+          pip install requests pillow playwright
+          playwright install chromium
       - name: 发送周报
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
