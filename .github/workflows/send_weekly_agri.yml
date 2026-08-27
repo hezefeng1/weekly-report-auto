@@ -1,0 +1,26 @@
+name: 推送农牧周报（JSON 中转版）
+
+on:
+  push:
+    paths:
+      - 'data/weekly_agri.json'
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          pip install requests
+          pip install pillow
+      - name: 发送周报
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_AGRI: ${{ secrets.RECEIVE_OPEN_ID_AGRI }}
+        run: python scripts/send_weekly_agri.py
