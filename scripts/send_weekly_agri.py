@@ -18,28 +18,31 @@ def build_markdown_from_json(data):
     today = data.get("日期", datetime.now().strftime("%Y年%m月%d日"))
     md_lines = []
 
-    # 标题
+    # ===== 标题 =====
     md_lines.append(f"# 农牧行业周报（{today}）")
     md_lines.append("")
 
-    # 摘要
+    # ===== 摘要 =====
     md_lines.append(f"**{data.get('摘要', '')}**")
     md_lines.append("")
 
-    # 本周卡片数据
+    # ===== 本周卡片数据 =====
     md_lines.append("## 本周卡片数据")
     core = data.get("核心数据", {})
     for key, value in core.items():
-        md_lines.append(f"- **{key}**：{value.get('数值', '—')} ｜ {value.get('变化', '')}")
+        val = value.get("数值", "—")
+        change = value.get("变化", "")
+        # 🔥 使用半角竖线 |（image.py 检测的是半角竖线）
+        md_lines.append(f"- **{key}**：{val} | {change}")
     md_lines.append("")
 
-    # 核心结论
+    # ===== 核心结论 =====
     md_lines.append("## 本周关键结论")
     for c in data.get("核心结论", []):
         md_lines.append(f"- {c}")
     md_lines.append("")
 
-    # 核心数据速览
+    # ===== 核心数据速览 =====
     md_lines.append("## 核心数据速览")
     md_lines.append("| 关键指标 | 本期数据 | 趋势 |")
     md_lines.append("|---------|---------|------|")
@@ -47,7 +50,11 @@ def build_markdown_from_json(data):
         md_lines.append(f"| {key} | {value.get('数值', '—')} | {value.get('趋势', '→')} |")
     md_lines.append("")
 
-    # 行业要闻
+    # ===== 行业要闻 =====
+    # 🔥 格式必须满足 image.py 的检测条件：
+    # 1. 包含 [标题](链接)
+    # 2. 包含半角竖线 |
+    # 3. 包含 【来源：XXX】
     md_lines.append("## 行业要闻")
     for item in data.get("行业要闻", []):
         title = item.get("标题", "")
@@ -55,12 +62,12 @@ def build_markdown_from_json(data):
         source = item.get("来源", "")
         summary = item.get("摘要", "")
         if link:
-            md_lines.append(f"- [{title}]({link}) ｜ 【来源：{source}】{summary}")
+            md_lines.append(f"- [{title}]({link}) | 【来源：{source}】{summary}")
         else:
-            md_lines.append(f"- {title} ｜ 【来源：{source}】{summary}")
+            md_lines.append(f"- {title} | 【来源：{source}】{summary}")
     md_lines.append("")
 
-    # 竞品动态
+    # ===== 竞品动态 =====
     md_lines.append("## 竞品动态")
     md_lines.append("| 企业 | 财务表现 | 战略动态 | 经营动作 | 最新动态 |")
     md_lines.append("|------|---------|---------|---------|---------|")
@@ -74,7 +81,7 @@ def build_markdown_from_json(data):
         )
     md_lines.append("")
 
-    # 行动建议
+    # ===== 行动建议 =====
     md_lines.append("## 行动建议")
     md_lines.append("| 维度 | 具体建议 | 数据/案例支撑 |")
     md_lines.append("|------|---------|--------------|")
@@ -94,7 +101,15 @@ def main():
     print("=" * 50)
 
     print("\n1. 加载周报数据...")
-    data = load_weekly_data()
+    try:
+        data = load_weekly_data()
+    except FileNotFoundError:
+        print("   ❌ data/weekly_agri.json 不存在，请先创建该文件")
+        return
+    except json.JSONDecodeError as e:
+        print(f"   ❌ JSON 解析失败: {e}")
+        return
+
     print(f"   ✅ 加载成功，周报日期: {data.get('日期', '未知')}")
     print(f"   📊 核心数据: {len(data.get('核心数据', {}))} 条")
     print(f"   📰 行业要闻: {len(data.get('行业要闻', []))} 条")
@@ -104,6 +119,19 @@ def main():
     print("\n2. 渲染 Markdown...")
     md_content = build_markdown_from_json(data)
     print(f"   ✅ 渲染完成，共 {len(md_content)} 字符")
+
+    # 🔥 调试：打印行业要闻部分的 Markdown，确认格式正确
+    print("\n📝 行业要闻部分预览:")
+    in_news = False
+    for line in md_content.split('\n'):
+        if '## 行业要闻' in line:
+            in_news = True
+            continue
+        if in_news:
+            if line.startswith('##'):
+                break
+            if line.strip():
+                print(f"   {line}")
 
     print("\n3. 渲染为图片...")
     image_path = markdown_to_image(md_content, "weekly_agri_report.png")
