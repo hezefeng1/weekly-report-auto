@@ -2,7 +2,7 @@ name: Policy Tracker湖南湖北
 
 on:
   schedule:
-    - cron: '0 11 * * 1'
+    - cron: 
   workflow_dispatch:
 
 jobs:
