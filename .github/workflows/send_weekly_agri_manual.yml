@@ -1,0 +1,25 @@
+name: 手动推送周报（正式版）
+
+on:
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: 安装字体和依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-wqy-zenhei fonts-wqy-microhei
+          pip install requests pillow playwright
+          playwright install chromium
+      - name: 推送给领导（正式版）
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          RECEIVE_OPEN_ID_AGRI: ${{ secrets.RECEIVE_OPEN_ID_AGRI_LEADER }}
+        run: python scripts/send_weekly_agri.py
