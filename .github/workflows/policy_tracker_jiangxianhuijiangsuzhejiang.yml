@@ -2,7 +2,7 @@ name: Policy Tracker江西安徽江苏浙江
 
 on:
   schedule:
-    - cron: '0 11 * * 1'
+    - cron: 
   workflow_dispatch:
 
 jobs:
