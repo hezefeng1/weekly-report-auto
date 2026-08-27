@@ -2,7 +2,7 @@ name: Policy Tracker陕西甘肃西藏宁夏
 
 on:
   schedule:
-    - cron: '0 11 * * 1'
+    - cron: 
   workflow_dispatch:
 
 jobs:
