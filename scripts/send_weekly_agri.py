@@ -10,13 +10,11 @@ RECEIVE_OPEN_ID_AGRI = os.environ.get("RECEIVE_OPEN_ID_AGRI")
 
 
 def load_weekly_data():
-    """从 JSON 文件加载周报数据"""
     with open("data/weekly_agri.json", "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def build_markdown_from_json(data):
-    """将 JSON 数据渲染为 Markdown 格式的周报"""
     today = data.get("日期", datetime.now().strftime("%Y年%m月%d日"))
     md_lines = []
 
@@ -37,8 +35,8 @@ def build_markdown_from_json(data):
 
     # 核心结论
     md_lines.append("## 本周关键结论")
-    for conclusion in data.get("核心结论", []):
-        md_lines.append(f"- {conclusion}")
+    for c in data.get("核心结论", []):
+        md_lines.append(f"- {c}")
     md_lines.append("")
 
     # 核心数据速览
@@ -96,15 +94,12 @@ def main():
     print("=" * 50)
 
     print("\n1. 加载周报数据...")
-    try:
-        data = load_weekly_data()
-        print(f"   ✅ 加载成功，周报日期: {data.get('日期', '未知')}")
-    except FileNotFoundError:
-        print("   ❌ data/weekly_agri.json 不存在，请先创建该文件")
-        return
-    except json.JSONDecodeError as e:
-        print(f"   ❌ JSON 解析失败: {e}")
-        return
+    data = load_weekly_data()
+    print(f"   ✅ 加载成功，周报日期: {data.get('日期', '未知')}")
+    print(f"   📊 核心数据: {len(data.get('核心数据', {}))} 条")
+    print(f"   📰 行业要闻: {len(data.get('行业要闻', []))} 条")
+    print(f"   🏢 竞品动态: {len(data.get('竞品动态', []))} 条")
+    print(f"   💡 行动建议: {len(data.get('行动建议', []))} 条")
 
     print("\n2. 渲染 Markdown...")
     md_content = build_markdown_from_json(data)
@@ -121,11 +116,11 @@ def main():
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     image_key = upload_image(token, image_bytes)
-    print(f"   ✅ 图片上传成功，image_key: {image_key}")
+    print(f"   ✅ 图片上传成功")
 
     print("\n6. 发送飞书消息...")
     receive_ids = RECEIVE_OPEN_ID_AGRI.split('|')
-    for idx, open_id in enumerate(receive_ids):
+    for open_id in receive_ids:
         open_id = open_id.strip()
         if open_id:
             try:
