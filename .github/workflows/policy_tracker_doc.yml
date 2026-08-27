@@ -2,7 +2,7 @@ name: Policy Tracker北京天津东北三省内蒙古
 
 on:
   schedule:
-    - cron: '0 11 * * 1'
+    - cron: 
   workflow_dispatch:
 
 jobs:
