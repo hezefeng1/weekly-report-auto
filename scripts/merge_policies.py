@@ -13,11 +13,11 @@ def merge_and_deduplicate():
     data = load_policies()
     policies = data.get("政策", [])
     
-    # 用 (省份, 城市, 政策名称) 作为去重键
+    # 用 (省份, 城市, 政策标题, 政策链接) 作为去重键
     seen = set()
     unique = []
     for p in policies:
-        key = (p.get("省份", ""), p.get("城市", ""), p.get("政策名称", ""))
+        key = (p.get("省份", ""), p.get("城市", ""), p.get("政策标题", ""), p.get("政策链接", ""))
         if key not in seen:
             seen.add(key)
             unique.append(p)
