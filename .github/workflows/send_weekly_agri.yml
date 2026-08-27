@@ -1,4 +1,4 @@
-name: 推送农牧周报（JSON 中转版）
+name: 自动推送周报（检查版）
 
 on:
   push:
